@@ -1,0 +1,3 @@
+api_url: "http://localhost:3000/v1"
+api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+model: "gemini-2.5-flash"
