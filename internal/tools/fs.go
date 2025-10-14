@@ -18,6 +18,8 @@ type Tool interface {
 	// Execute runs the tool with the given arguments and returns the output.
 	// The args are expected to be a JSON string.
 	Execute(args string) (string, error)
+	// RequiresConfirmation indicates whether the tool requires user confirmation before execution.
+	RequiresConfirmation() bool
 }
 
 // --- ListDirectoryTool ---
@@ -27,6 +29,10 @@ type ListDirectoryTool struct{}
 
 func (t *ListDirectoryTool) Name() string {
 	return "list_directory"
+}
+
+func (t *ListDirectoryTool) RequiresConfirmation() bool {
+	return false
 }
 
 func (t *ListDirectoryTool) Description() string {
@@ -100,6 +106,10 @@ func (t *ReadFileTool) Name() string {
 	return "read_file"
 }
 
+func (t *ReadFileTool) RequiresConfirmation() bool {
+	return false
+}
+
 func (t *ReadFileTool) Description() string {
 	return "Reads the entire content of a specified file. Usage: {\"path\": \"<file_path>\"}"
 }
@@ -137,4 +147,62 @@ func (t *ReadFileTool) Execute(args string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+// --- WriteFileTool ---
+
+// WriteFileTool writes content to a specified file.
+type WriteFileTool struct{}
+
+func (t *WriteFileTool) Name() string {
+	return "write_file"
+}
+
+func (t *WriteFileTool) RequiresConfirmation() bool {
+	return true
+}
+
+func (t *WriteFileTool) Description() string {
+	return "Writes content to a specified file, creating the file if it doesn't exist or overwriting it if it does. Usage: {\"path\": \"<file_path>\", \"content\": \"<content_to_write>\"}"
+}
+
+func (t *WriteFileTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "The path to the file to write to.",
+			},
+			"content": map[string]any{
+				"type":        "string",
+				"description": "The content to write to the file.",
+			},
+		},
+		"required": []string{"path", "content"},
+	}
+}
+
+type WriteFileArgs struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func (t *WriteFileTool) Execute(args string) (string, error) {
+	var toolArgs WriteFileArgs
+	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
+		return "", fmt.Errorf("invalid arguments for write_file: %w", err)
+	}
+
+	if toolArgs.Path == "" {
+		return "", fmt.Errorf("path argument is required for write_file")
+	}
+
+	// The permissions 0644 are standard for text files.
+	err := os.WriteFile(toolArgs.Path, []byte(toolArgs.Content), 0644)
+	if err != nil {
+		return "", fmt.Errorf("error writing to file '%s': %w", toolArgs.Path, err)
+	}
+
+	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(toolArgs.Content), toolArgs.Path), nil
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/charmbracelet/bubbletea"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -32,12 +31,19 @@ func NewClient(apiURL, apiKey string) *Client {
 	readFileTool := &tools.ReadFileTool{}
 	toolRegistry[readFileTool.Name()] = readFileTool
 
+	writeFileTool := &tools.WriteFileTool{}
+	toolRegistry[writeFileTool.Name()] = writeFileTool
+
 	return &Client{
 		apiURL:       apiURL,
 		apiKey:       apiKey,
 		http:         &http.Client{},
 		toolRegistry: toolRegistry,
 	}
+}
+
+func (c *Client) GetToolRegistry() map[string]tools.Tool {
+	return c.toolRegistry
 }
 
 // --- API Data Structures ---
@@ -193,8 +199,20 @@ type StreamContentMsg struct {
 // StreamEndMsg is sent when the stream ends.
 type StreamEndMsg struct{}
 
+// AssistantToolCallMsg is sent when the model requests tool calls.
+// The TUI is responsible for executing them and continuing the loop.
+type AssistantToolCallMsg struct {
+	Message Message
+}
+
 // ErrorMsg is sent when an error occurs.
 type ErrorMsg struct{ Err error }
+
+// ToolResultMsg is sent when a tool has finished executing.
+type ToolResultMsg struct {
+	ToolCallID string
+	Result     string
+}
 
 // CompletionStream sends a list of messages and returns a command that streams the response.
 func (c *Client) CompletionStream(messages []Message, model string) tea.Cmd {
@@ -315,39 +333,18 @@ func (c *Client) runCompletionStream(messages []Message, model string, ch chan t
 
 	// After stream, check for tool calls
 	if finishReason == "tool_calls" {
-
-		// Append the assistant's message with tool call requests to history
+		// Create the assistant's message with the tool call requests.
 		assistantMessage := Message{
 			Role:      "assistant",
 			ToolCalls: toolCalls,
 		}
-		newMessages := append(messages, assistantMessage)
 
-		// Execute tools and append results
-		for _, toolCall := range toolCalls {
-			tool, ok := c.toolRegistry[toolCall.Function.Name]
-			if !ok {
-				log.Printf("Error: tool '%s' not found", toolCall.Function.Name)
-				continue
-			}
+		// Send this message to the TUI. The TUI will handle execution,
+		// user confirmation, and continuing the conversation.
+		ch <- AssistantToolCallMsg{Message: assistantMessage}
 
-			result, err := tool.Execute(toolCall.Function.Arguments)
-			if err != nil {
-				log.Printf("Error executing tool '%s': %v", toolCall.Function.Name, err)
-				result = fmt.Sprintf("Error: %v", err)
-			}
-
-			// Append tool result to messages
-			newMessages = append(newMessages, Message{
-				Role:       "tool",
-				ToolCallID: toolCall.ID,
-				Content:    result,
-			})
-		}
-
-		// Recurse with the new messages to get the final response
-		c.runCompletionStream(newMessages, model, ch)
-		return
+		// The rest of the stream processing for this turn is now complete.
+		// The TUI will initiate the next turn.
 	}
 
 	ch <- StreamEndMsg{}
