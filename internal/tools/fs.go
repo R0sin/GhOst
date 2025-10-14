@@ -13,6 +13,8 @@ type Tool interface {
 	Name() string
 	// Description is a description of the tool's purpose, inputs, and outputs.
 	Description() string
+	// Parameters returns the JSON schema for the tool's arguments.
+	Parameters() any
 	// Execute runs the tool with the given arguments and returns the output.
 	// The args are expected to be a JSON string.
 	Execute(args string) (string, error)
@@ -29,6 +31,19 @@ func (t *ListDirectoryTool) Name() string {
 
 func (t *ListDirectoryTool) Description() string {
 	return "Lists files and subdirectories within a specified directory path. Usage: {\"path\": \"<directory_path>\"}"
+}
+
+func (t *ListDirectoryTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "The path to the directory to list.",
+			},
+		},
+		"required": []string{"path"},
+	}
 }
 
 type ListDirectoryArgs struct {
@@ -74,4 +89,52 @@ func (t *ListDirectoryTool) Execute(args string) (string, error) {
 	}
 
 	return output.String(), nil
+}
+
+// --- ReadFileTool ---
+
+// ReadFileTool reads the content of a file.
+type ReadFileTool struct{}
+
+func (t *ReadFileTool) Name() string {
+	return "read_file"
+}
+
+func (t *ReadFileTool) Description() string {
+	return "Reads the entire content of a specified file. Usage: {\"path\": \"<file_path>\"}"
+}
+
+func (t *ReadFileTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "The path to the file to read.",
+			},
+		},
+		"required": []string{"path"},
+	}
+}
+
+type ReadFileArgs struct {
+	Path string `json:"path"`
+}
+
+func (t *ReadFileTool) Execute(args string) (string, error) {
+	var toolArgs ReadFileArgs
+	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
+		return "", fmt.Errorf("invalid arguments for read_file: %w. Expected JSON: {\"path\": \"...\"}", err)
+	}
+
+	if toolArgs.Path == "" {
+		return "", fmt.Errorf("path argument is required for read_file")
+	}
+
+	content, err := os.ReadFile(toolArgs.Path)
+	if err != nil {
+		return "", fmt.Errorf("error reading file '%s': %w", toolArgs.Path, err)
+	}
+
+	return string(content), nil
 }

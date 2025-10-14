@@ -25,8 +25,12 @@ type Client struct {
 func NewClient(apiURL, apiKey string) *Client {
 	// Initialize the tool registry and register tools.
 	toolRegistry := make(map[string]tools.Tool)
+
 	listDirTool := &tools.ListDirectoryTool{}
 	toolRegistry[listDirTool.Name()] = listDirTool
+
+	readFileTool := &tools.ReadFileTool{}
+	toolRegistry[readFileTool.Name()] = readFileTool
 
 	return &Client{
 		apiURL:       apiURL,
@@ -113,14 +117,6 @@ type StreamCompletionResponse struct {
 func (c *Client) getAvailableToolsAsJSON() []Tool {
 	var availableTools []Tool
 	for _, tool := range c.toolRegistry {
-		// A simple schema with no parameters for now.
-		// In a real implementation, this would be generated from the tool's definition.
-		schema := map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
-		}
-
 		availableTools = append(availableTools, Tool{
 			Type: "function",
 			Function: struct {
@@ -130,7 +126,7 @@ func (c *Client) getAvailableToolsAsJSON() []Tool {
 			}{
 				Name:        tool.Name(),
 				Description: tool.Description(),
-				Parameters:  schema,
+				Parameters:  tool.Parameters(), // Call the tool's own method
 			},
 		})
 	}
