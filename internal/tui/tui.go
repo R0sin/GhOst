@@ -18,16 +18,17 @@ var (
 
 // model is the state of our TUI application.
 type model struct {
-	viewport    viewport.Model
-	textarea    textarea.Model
-	llmClient   *llm.Client
-	llmModel    string
-	messages    []llm.Message
-	sub         chan tea.Msg // Channel for receiving streaming messages
-	loading     bool
-	lastContent string // Stores the full content of the last streaming message
-	err         error
+	viewport        viewport.Model
+	textarea        textarea.Model
+	agent           *llm.Agent   // The new core logic handler
+	sub             chan tea.Msg // Channel for receiving streaming messages
+	loading         bool
+	lastContent     string // Stores the live content of the current streaming message
+	err             error
+	availableHeight int // Available height for the viewport
 }
+
+// --- TUI Messages ---
 
 // A command that waits for the next message from a subscription.
 func waitForActivity(sub chan tea.Msg) tea.Cmd {
@@ -36,6 +37,11 @@ func waitForActivity(sub chan tea.Msg) tea.Cmd {
 	}
 }
 
+// toolResultMsg is sent when a tool has finished executing.
+// It is defined in the llm package but handled here.
+
+// --- TUI Commands ---
+
 // NewModel creates the initial model for the TUI.
 func NewModel(client *llm.Client, modelName string) tea.Model {
 	ti := textarea.New()
@@ -43,12 +49,11 @@ func NewModel(client *llm.Client, modelName string) tea.Model {
 	ti.Focus()
 
 	vp := viewport.New(0, 0)
+
 	return model{
-		llmClient: client,
-		llmModel:  modelName,
-		textarea:  ti,
-		viewport:  vp,
-		messages:  []llm.Message{},
+		agent:    llm.NewAgent(client, modelName),
+		textarea: ti,
+		viewport: vp,
 	}
 }
 
@@ -64,10 +69,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		availableHeight := msg.Height - m.textarea.Height() - lipgloss.Height(m.helpView())
+		m.availableHeight = msg.Height - m.textarea.Height() - lipgloss.Height(m.helpView())
 		m.viewport.Width = msg.Width
-		m.viewport.Height = availableHeight
-		m.textarea.SetWidth(msg.Width)
 		m.viewport.SetContent(m.renderConversation(true))
 		return m, nil
 
@@ -80,46 +83,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.err = nil
 		m.lastContent = ""
-		m.messages = append(m.messages, llm.Message{Role: "assistant", Content: ""})
-		return m, waitForActivity(m.sub) // Wait for the next message
+		m.agent.HandleStreamStart()
+		return m, waitForActivity(m.sub)
 
 	case llm.StreamContentMsg:
-		if len(m.messages) > 0 {
-			last := len(m.messages) - 1
-			m.messages[last].Content += msg.Content
-			m.lastContent = m.messages[last].Content
-			m.viewport.SetContent(m.renderConversation(false))
-			m.viewport.GotoBottom()
-		}
-		return m, waitForActivity(m.sub) // Wait for the next message
+		m.agent.HandleStreamContent(msg.Content)
+		m.lastContent = m.agent.GetViewState().LastStreamedContent
+		m.viewport.SetContent(m.renderConversation(false))
+		m.viewport.GotoBottom()
+		return m, waitForActivity(m.sub)
 
 	case llm.StreamEndMsg:
 		m.loading = false
-		m.sub = nil // Stop listening
+		m.sub = nil
+		m.lastContent = ""
 		m.viewport.SetContent(m.renderConversation(true))
 		m.viewport.GotoBottom()
 		return m, nil
 
+	case llm.AssistantToolCallMsg:
+		cmd = m.agent.HandleToolCallRequest(msg)
+		m.viewport.SetContent(m.renderConversation(true))
+		m.viewport.GotoBottom()
+		return m, cmd
+
+	case llm.ToolResultMsg:
+		cmd = m.agent.HandleToolResult(msg.ToolCallID, msg.Result)
+		m.viewport.SetContent(m.renderConversation(true))
+		m.viewport.GotoBottom()
+		return m, cmd
+
 	case llm.ErrorMsg:
 		m.loading = false
 		m.err = msg.Err
-		m.sub = nil // Stop listening
+		m.sub = nil
 		m.viewport.SetContent(m.renderConversation(true))
 		m.viewport.GotoBottom()
 		return m, nil
 
 	case tea.KeyMsg:
+		viewState := m.agent.GetViewState()
+		if viewState.IsConfirming {
+			switch msg.String() {
+			case "y", "Y":
+				cmd = m.agent.HandleConfirmation(true)
+				return m, cmd
+			case "n", "N":
+				cmd = m.agent.HandleConfirmation(false)
+				return m, cmd
+			}
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyEnter:
 			prompt := strings.TrimSpace(m.textarea.Value())
-			if prompt != "" && !m.loading {
-				m.messages = append(m.messages, llm.Message{Role: "user", Content: prompt})
+			if prompt != "" && !m.loading && !viewState.IsConfirming {
+				cmd = m.agent.HandleUserInput(prompt)
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderConversation(true))
 				m.viewport.GotoBottom()
-				return m, m.llmClient.CompletionStream(m.messages, m.llmModel)
+				return m, cmd
 			}
 		}
 	}
@@ -136,8 +161,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the UI based on the model's state.
 func (m model) View() string {
+	viewState := m.agent.GetViewState()
+	var confirmationBox string
+
+	if viewState.IsConfirming {
+		confirmStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("205")).
+			Padding(1, 2)
+
+		question := fmt.Sprintf(
+			"GhOst wants to run the tool: %s\n\nArguments:\n%s\n\nDo you want to allow this?",
+			viewState.ConfirmingToolCall.Function.Name,
+			viewState.ConfirmingToolCall.Function.Arguments,
+		)
+		confirmationBox = confirmStyle.Render(question)
+	}
+
+	// Dynamically set the viewport height based on whether the confirmation box is visible.
+	confirmationBoxHeight := lipgloss.Height(confirmationBox)
+	m.viewport.Height = m.availableHeight - confirmationBoxHeight
+
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
+		confirmationBox, // Will be an empty string if not confirming
 		m.viewport.View(),
 		m.textarea.View(),
 		m.helpView(),
@@ -146,16 +193,20 @@ func (m model) View() string {
 
 // helpView renders the help text at the bottom.
 func (m model) helpView() string {
+	if m.agent.GetViewState().IsConfirming {
+		return helpStyle.Render("y: confirm | n: deny | ctrl+c: quit")
+	}
 	return helpStyle.Render("enter: send | ctrl+c: quit")
 }
 
 // renderConversation renders the message history.
 func (m model) renderConversation(fullRender bool) string {
 	var b strings.Builder
+	viewState := m.agent.GetViewState()
 
 	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle())
 
-	for i, msg := range m.messages {
+	for i, msg := range viewState.Messages {
 		var roleStyle lipgloss.Style
 		var roleText string
 
@@ -169,8 +220,8 @@ func (m model) renderConversation(fullRender bool) string {
 			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
 
-			if i == len(m.messages)-1 && !fullRender {
-				b.WriteString(msg.Content)
+			if i == len(viewState.Messages)-1 && !fullRender {
+				b.WriteString(m.lastContent) // Use the live content for the last message
 			} else {
 				renderedContent, err := renderer.Render(msg.Content)
 				if err != nil {
