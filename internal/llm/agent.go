@@ -24,10 +24,22 @@ type Agent struct {
 
 // NewAgent creates a new agent.
 func NewAgent(client *Client, modelName string) *Agent {
+	// Initialize the tool registry and register tools.
+	toolRegistry := make(map[string]tools.Tool)
+
+	listDirTool := &tools.ListDirectoryTool{}
+	toolRegistry[listDirTool.Name()] = listDirTool
+
+	readFileTool := &tools.ReadFileTool{}
+	toolRegistry[readFileTool.Name()] = readFileTool
+
+	writeFileTool := &tools.WriteFileTool{}
+	toolRegistry[writeFileTool.Name()] = writeFileTool
+
 	return &Agent{
 		client:       client,
 		modelName:    modelName,
-		toolRegistry: client.GetToolRegistry(),
+		toolRegistry: toolRegistry,
 		messages:     []Message{},
 	}
 }
@@ -50,10 +62,30 @@ func (a *Agent) GetViewState() ViewState {
 	}
 }
 
+// getAvailableToolsAsJSON converts the registered tools into the JSON format expected by the API.
+func (a *Agent) getAvailableToolsAsJSON() []Tool {
+	var availableTools []Tool
+	for _, tool := range a.toolRegistry {
+		availableTools = append(availableTools, Tool{
+			Type: "function",
+			Function: struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Parameters  any    `json:"parameters"`
+			}{
+				Name:        tool.Name(),
+				Description: tool.Description(),
+				Parameters:  tool.Parameters(),
+			},
+		})
+	}
+	return availableTools
+}
+
 // HandleUserInput starts a new conversation turn.
 func (a *Agent) HandleUserInput(input string) tea.Cmd {
 	a.messages = append(a.messages, Message{Role: "user", Content: input})
-	return a.client.CompletionStream(a.messages, a.modelName)
+	return a.client.CompletionStream(a.messages, a.modelName, a.getAvailableToolsAsJSON())
 }
 
 // HandleStreamStart prepares the agent for a new stream of messages.
@@ -108,7 +140,7 @@ func (a *Agent) HandleConfirmation(confirmed bool) tea.Cmd {
 
 func (a *Agent) processToolCalls() tea.Cmd {
 	if len(a.pendingToolCalls) == 0 {
-		return a.client.CompletionStream(a.messages, a.modelName)
+		return a.client.CompletionStream(a.messages, a.modelName, a.getAvailableToolsAsJSON())
 	}
 
 	toolCall := a.pendingToolCalls[0]
