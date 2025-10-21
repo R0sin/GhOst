@@ -70,7 +70,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.availableHeight = msg.Height - m.textarea.Height() - lipgloss.Height(m.helpView())
+		m.viewport.Height = m.availableHeight
 		m.viewport.Width = msg.Width
+		m.textarea.SetWidth(msg.Width)
 		m.viewport.SetContent(m.renderConversation(true))
 		return m, nil
 
