@@ -36,6 +36,12 @@ func NewAgent(client *Client, modelName string) *Agent {
 	writeFileTool := &tools.WriteFileTool{}
 	toolRegistry[writeFileTool.Name()] = writeFileTool
 
+	searchFileContentTool := &tools.SearchFileContentTool{}
+	toolRegistry[searchFileContentTool.Name()] = searchFileContentTool
+
+	globTool := &tools.GlobTool{}
+	toolRegistry[globTool.Name()] = globTool
+
 	return &Agent{
 		client:       client,
 		modelName:    modelName,

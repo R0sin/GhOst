@@ -1,10 +1,15 @@
 package tools
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Tool represents a function that can be called by the agent.
@@ -205,4 +210,192 @@ func (t *WriteFileTool) Execute(args string) (string, error) {
 	}
 
 	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(toolArgs.Content), toolArgs.Path), nil
+}
+
+// --- SearchFileContentTool ---
+
+// SearchFileContentTool searches for a pattern in files within a directory.
+type SearchFileContentTool struct{}
+
+func (t *SearchFileContentTool) Name() string {
+	return "search_file_content"
+}
+
+func (t *SearchFileContentTool) RequiresConfirmation() bool {
+	return false
+}
+
+func (t *SearchFileContentTool) Description() string {
+	return "Recursively searches for a regular expression pattern in files within a directory. Usage: {\"path\": \"<directory_path>\", \"pattern\": \"<regex_pattern>\"}"
+}
+
+func (t *SearchFileContentTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "The directory path to start searching from.",
+			},
+			"pattern": map[string]any{
+				"type":        "string",
+				"description": "The regular expression pattern to search for.",
+			},
+		},
+		"required": []string{"path", "pattern"},
+	}
+}
+
+type SearchFileContentArgs struct {
+	Path    string `json:"path"`
+	Pattern string `json:"pattern"`
+}
+
+func (t *SearchFileContentTool) Execute(args string) (string, error) {
+	var toolArgs SearchFileContentArgs
+	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
+		return "", fmt.Errorf("invalid arguments for search_file_content: %w", err)
+	}
+
+	if toolArgs.Path == "" || toolArgs.Pattern == "" {
+		return "", fmt.Errorf("path and pattern arguments are required for search_file_content")
+	}
+
+	regex, err := regexp.Compile(toolArgs.Pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid regex pattern: %w", err)
+	}
+
+	var results strings.Builder
+	var matchesFound int
+
+	err = filepath.WalkDir(toolArgs.Path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err // Propagate errors from WalkDir
+		}
+		if !d.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				// Can't open, just log it and continue
+				results.WriteString(fmt.Sprintf("Could not open file %s: %v ", path, err))
+				return nil
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			lineNumber := 1
+			for scanner.Scan() {
+				if regex.MatchString(scanner.Text()) {
+					matchesFound++
+					results.WriteString(fmt.Sprintf("%s:%d: %s", path, lineNumber, scanner.Text()))
+				}
+				lineNumber++
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("error walking directory '%s': %w", toolArgs.Path, err)
+	}
+
+	if matchesFound == 0 {
+		return "No matches found.", nil
+	}
+
+	return results.String(), nil
+}
+
+// --- GlobTool ---
+
+// GlobTool finds files matching a glob pattern.
+type GlobTool struct{}
+
+func (t *GlobTool) Name() string {
+	return "glob"
+}
+
+func (t *GlobTool) RequiresConfirmation() bool {
+	return false
+}
+
+func (t *GlobTool) Description() string {
+	return "Finds files and directories matching a specified glob pattern within a given path. Usage: {\"pattern\": \"<glob_pattern>\", \"path\": \"<base_directory>\"}"
+}
+
+func (t *GlobTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pattern": map[string]any{
+				"type":        "string",
+				"description": "The glob pattern to match files against (e.g., \"internal/**/*.go\").",
+			},
+			"path": map[string]any{
+				"type":        "string",
+				"description": "Optional: The base directory to start the glob search from. Defaults to the current working directory if not provided.",
+			},
+		},
+		"required": []string{"pattern"},
+	}
+}
+
+type GlobArgs struct {
+	Pattern string `json:"pattern"`
+	Path    string `json:"path"`
+}
+
+func (t *GlobTool) Execute(args string) (string, error) {
+	var toolArgs GlobArgs
+	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
+		return "", fmt.Errorf("invalid arguments for glob: %w", err)
+	}
+
+	if toolArgs.Pattern == "" {
+		return "", fmt.Errorf("pattern argument is required for glob")
+	}
+
+	basePath := toolArgs.Path
+	if basePath == "" {
+		basePath = "."
+	}
+
+	var matches []string
+	err := filepath.WalkDir(basePath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			return nil // Skip directories, we only care about files matching the pattern
+		}
+
+		// Get the path relative to the basePath for matching against the pattern
+		relativePath, err := filepath.Rel(basePath, path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
+		}
+
+		matched, err := doublestar.Match(toolArgs.Pattern, relativePath)
+		if err != nil {
+			// This error indicates a malformed pattern, not a non-match
+			return fmt.Errorf("invalid glob pattern %s: %w", toolArgs.Pattern, err)
+		}
+
+		if matched {
+			matches = append(matches, path)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("error walking directory '%s': %w", basePath, err)
+	}
+
+	if len(matches) == 0 {
+		return "No files matched the pattern.", nil
+	}
+
+	return strings.Join(matches, "\n"), nil
 }
