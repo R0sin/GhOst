@@ -399,3 +399,81 @@ func (t *GlobTool) Execute(args string) (string, error) {
 
 	return strings.Join(matches, "\n"), nil
 }
+
+// --- ReplaceTool ---
+
+// ReplaceTool replaces the first occurrence of a string in a file.
+type ReplaceTool struct{}
+
+func (t *ReplaceTool) Name() string {
+	return "replace"
+}
+
+func (t *ReplaceTool) RequiresConfirmation() bool {
+	return true // Requires user confirmation as it modifies a file
+}
+
+func (t *ReplaceTool) Description() string {
+	return "Replaces the first occurrence of a specified old string with a new string in a file. Usage: {\"path\": \"<file_path>\", \"old_string\": \"<string_to_find>\", \"new_string\": \"<string_to_replace_with>\"}"
+}
+
+func (t *ReplaceTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "The path to the file to modify.",
+			},
+			"old_string": map[string]any{
+				"type":        "string",
+				"description": "The string to find in the file.",
+			},
+			"new_string": map[string]any{
+				"type":        "string",
+				"description": "The string to replace the old string with.",
+			},
+		},
+		"required": []string{"path", "old_string", "new_string"},
+	}
+}
+
+type ReplaceArgs struct {
+	Path      string `json:"path"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+}
+
+func (t *ReplaceTool) Execute(args string) (string, error) {
+	var toolArgs ReplaceArgs
+	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
+		return "", fmt.Errorf("invalid arguments for replace: %w", err)
+	}
+
+	if toolArgs.Path == "" || toolArgs.OldString == "" || toolArgs.NewString == "" {
+		return "", fmt.Errorf("path, old_string, and new_string arguments are required for replace")
+	}
+
+	// Read the file content
+	contentBytes, err := os.ReadFile(toolArgs.Path)
+	if err != nil {
+		return "", fmt.Errorf("error reading file '%s': %w", toolArgs.Path, err)
+	}
+	content := string(contentBytes)
+
+	// Find and replace the first occurrence
+	index := strings.Index(content, toolArgs.OldString)
+	if index == -1 {
+		return "", fmt.Errorf("old_string not found in file '%s'", toolArgs.Path)
+	}
+
+	modifiedContent := content[:index] + toolArgs.NewString + content[index+len(toolArgs.OldString):]
+
+	// Write the modified content back to the file
+	err = os.WriteFile(toolArgs.Path, []byte(modifiedContent), 0644)
+	if err != nil {
+		return "", fmt.Errorf("error writing to file '%s': %w", toolArgs.Path, err)
+	}
+
+	return fmt.Sprintf("Successfully replaced first occurrence of string in %s", toolArgs.Path), nil
+}

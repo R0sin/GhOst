@@ -42,6 +42,9 @@ func NewAgent(client *Client, modelName string) *Agent {
 	globTool := &tools.GlobTool{}
 	toolRegistry[globTool.Name()] = globTool
 
+	replaceTool := &tools.ReplaceTool{}
+	toolRegistry[replaceTool.Name()] = replaceTool
+
 	return &Agent{
 		client:       client,
 		modelName:    modelName,
