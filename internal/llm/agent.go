@@ -45,6 +45,9 @@ func NewAgent(client *Client, modelName string) *Agent {
 	replaceTool := &tools.ReplaceTool{}
 	toolRegistry[replaceTool.Name()] = replaceTool
 
+	runShellTool := &tools.RunShellCommandTool{}
+	toolRegistry[runShellTool.Name()] = runShellTool
+
 	return &Agent{
 		client:       client,
 		modelName:    modelName,
