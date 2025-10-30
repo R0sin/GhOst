@@ -1,4 +1,4 @@
-# GhOst 👻
+# Tachigoma 👻
 
 本项目是一个在终端中与大语言模型（LLM）优雅对话的客户端，出于个人学习目的而创建。
 
@@ -11,9 +11,9 @@
 ## ✨ 功能特性
 
 - **双交互模式**:
-  - **直接模式**: 通过 `ghost -p "你的问题"` 或 `ghost "你的问题"` 实现快速问答，获取结果后立即退出。
-  - **交互模式**: 直接运行 `ghost` 进入沉浸式的 TUI 界面，支持多轮上下文对话。
-- **灵活的配置**: 通过项目根目录下的 `.ghost.yaml` 文件管理 API 地址、密钥和模型名称，实现代码与配置分离。
+  - **直接模式**: 通过 `tachigoma -p "你的问题"` 或 `tachigoma "你的问题"` 实现快速问答，获取结果后立即退出。
+  - **交互模式**: 直接运行 `tachigoma` 进入沉浸式的 TUI 界面，支持多轮上下文对话。
+- **灵活的配置**: 通过项目根目录下的 `.tachigoma.yaml` 文件管理 API 地址、密钥和模型名称，实现代码与配置分离。
 - **优雅的 TUI**: 基于 `charmbracelet/bubbletea` 构建，提供流畅的、带状态（加载中、错误提示）的对话体验。
 - **美观的样式**: 使用 `charmbracelet/lipgloss` 对对话角色进行着色，界面清晰易读。
 - **健壮的命令结构**: 基于 `spf13/cobra` 构建，命令结构清晰，易于未来扩展。
@@ -37,10 +37,10 @@
 
 ```bash
 # 1. 克隆项目到本地
-git clone https://github.com/R0sin/GhOst.git
+git clone https://github.com/R0sin/tachigoma.git
 
 # 2. 进入项目目录
-cd GhOst
+cd tachigoma
 
 # 3. 下载项目依赖
 go mod tidy
@@ -48,10 +48,10 @@ go mod tidy
 
 ### 3. 配置
 
-在项目根目录下，创建一个名为 `.ghost.yaml` 的文件，并填入以下内容。请将 `api_key` 替换为你自己的密钥。
+在项目根目录下，创建一个名为 `.tachigoma.yaml` 的文件，并填入以下内容。请将 `api_key` 替换为你自己的密钥。
 
 ```yaml
-# .ghost.yaml
+# .tachigoma.yaml
 
 # 你的 OpenAI 标准 API 地址
 api_url: "http://localhost:3000/v1"

@@ -72,7 +72,7 @@ func (c *Client) Completion(messages []Message, model string) (string, error) {
 	// Handle the case where the model wants to call a tool, even in non-streaming mode.
 	// For this simple mode, we'll just indicate that a tool call was attempted.
 	if len(compResp.Choices) > 0 && len(compResp.Choices[0].Message.ToolCalls) > 0 {
-		return "[GhOst wanted to use a tool. Please use interactive mode to allow tool usage.]", nil
+		return "[Tachigoma wanted to use a tool. Please use interactive mode to allow tool usage.]", nil
 	}
 
 	return "", fmt.Errorf("no response choices found")

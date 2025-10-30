@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"GhOst/internal/llm"
 	"fmt"
 	"strings"
+	"tachigoma/internal/llm"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -173,7 +173,7 @@ func (m model) View() string {
 			Padding(1, 2)
 
 		question := fmt.Sprintf(
-			"GhOst wants to run the tool: %s\n\nArguments:\n%s\n\nDo you want to allow this?",
+			"Tachigoma wants to run the tool: %s\n\nArguments:\n%s\n\nDo you want to allow this?",
 			viewState.ConfirmingToolCall.Function.Name,
 			viewState.ConfirmingToolCall.Function.Arguments,
 		)
@@ -218,7 +218,7 @@ func (m model) renderConversation(fullRender bool) string {
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
 			b.WriteString(msg.Content + "\n\n")
 		} else {
-			roleText = "GhOst"
+			roleText = "Tachigoma"
 			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
 
@@ -235,7 +235,7 @@ func (m model) renderConversation(fullRender bool) string {
 	}
 
 	if m.loading && len(m.lastContent) == 0 {
-		b.WriteString("GhOst: ...\n")
+		b.WriteString("Tachigoma: ...\n")
 	} else if m.err != nil {
 		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err)))

@@ -1,9 +1,9 @@
 package llm
 
 import (
-	"GhOst/internal/tools"
 	"fmt"
 	"github.com/charmbracelet/bubbletea"
+	"tachigoma/internal/tools"
 )
 
 // Agent is the core logic unit of the application. It is UI-independent.

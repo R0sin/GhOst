@@ -1,6 +1,6 @@
 package main
 
-import "GhOst/cmd"
+import "tachigoma/cmd"
 
 func main() {
 	cmd.Execute()

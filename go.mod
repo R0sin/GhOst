@@ -1,4 +1,4 @@
-module GhOst
+module tachigoma
 
 go 1.23.0
 

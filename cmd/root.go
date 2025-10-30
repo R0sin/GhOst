@@ -5,8 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"GhOst/internal/llm"
-	"GhOst/internal/tui"
+	"tachigoma/internal/llm"
+	"tachigoma/internal/tui"
+
 	"github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -17,8 +18,8 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ghost",
-	Short: "GhOst is a CLI client for LLM.",
+	Use:   "tachigoma",
+	Short: "Tachigoma is a CLI client for LLM.",
 	Long:  `A simple and powerful CLI client for interacting with Large Language Models.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		var promptProvided bool
@@ -49,14 +50,14 @@ func directAPICall(p string) {
 	model := viper.GetString("model")
 
 	if apiKey == "" {
-		fmt.Println("API key is not set. Please configure it in .ghost.yaml or environment variables.")
+		fmt.Println("API key is not set. Please configure it in .tachigoma.yaml or environment variables.")
 		os.Exit(1)
 	}
 
 	client := llm.NewClient(apiURL, apiKey)
 
 	fmt.Println("You:", p)
-	fmt.Print("GhOst: ...")
+	fmt.Print("Tachigoma: ...")
 
 	messages := []llm.Message{
 		{Role: "user", Content: p},
@@ -68,7 +69,7 @@ func directAPICall(p string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\rGhOst: %s  \n", response)
+	fmt.Printf("\rTachigoma: %s  \n", response)
 }
 
 // callTUI handles the interactive session mode.
@@ -79,7 +80,7 @@ func callTUI() {
 	model := viper.GetString("model")
 
 	if apiKey == "" {
-		fmt.Println("API key is not set. Please configure it in .ghost.yaml or environment variables.")
+		fmt.Println("API key is not set. Please configure it in .tachigoma.yaml or environment variables.")
 		os.Exit(1)
 	}
 
@@ -107,7 +108,7 @@ func init() {
 }
 
 func initConfig() {
-	viper.SetConfigName(".ghost")
+	viper.SetConfigName(".tachigoma")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("$HOME")
