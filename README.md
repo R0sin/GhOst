@@ -1,6 +1,6 @@
 # Tachigoma
 
-![](/images/tachigoma.png)
+<img src="images/tachigoma.png" alt="tachigoma" width="256"/>
 
 Tachigoma 是一个在终端中与大语言模型（LLM）交互的 Agent，出于个人学习目的而创建。
 
