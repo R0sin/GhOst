@@ -209,6 +209,10 @@ func (m model) renderConversation(fullRender bool) string {
 	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle())
 
 	for i, msg := range viewState.Messages {
+		if msg.Role == "system" {
+			continue
+		}
+
 		var roleStyle lipgloss.Style
 		var roleText string
 

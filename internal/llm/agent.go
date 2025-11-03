@@ -1,10 +1,15 @@
 package llm
 
 import (
+	_ "embed"
 	"fmt"
-	"github.com/charmbracelet/bubbletea"
 	"tachigoma/internal/tools"
+
+	"github.com/charmbracelet/bubbletea"
 )
+
+//go:embed prompt.md
+var systemPromptContent string
 
 // Agent is the core logic unit of the application. It is UI-independent.
 type Agent struct {
@@ -52,7 +57,9 @@ func NewAgent(client *Client, modelName string) *Agent {
 		client:       client,
 		modelName:    modelName,
 		toolRegistry: toolRegistry,
-		messages:     []Message{},
+		messages: []Message{
+			{Role: "system", Content: systemPromptContent},
+		},
 	}
 }
 
