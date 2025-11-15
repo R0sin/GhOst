@@ -25,7 +25,8 @@ type model struct {
 	loading         bool
 	lastContent     string // Stores the live content of the current streaming message
 	err             error
-	availableHeight int // Available height for the viewport
+	availableHeight int  // Available height for the viewport
+	ready           bool // Whether the UI has been sized and is ready for rendering
 }
 
 // --- TUI Messages ---
@@ -34,6 +35,13 @@ type model struct {
 func waitForActivity(sub chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		return <-sub
+	}
+}
+
+// safeGotoBottom scrolls to bottom only if the viewport is ready.
+func (m *model) safeGotoBottom() {
+	if m.ready && m.viewport.Height > 0 {
+		m.viewport.GotoBottom()
 	}
 }
 
@@ -97,6 +105,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = msg.Width
 		m.textarea.SetWidth(msg.Width)
 		m.viewport.SetContent(m.renderConversation(true))
+		m.ready = true // Mark UI as ready after first resize
 		return m, nil
 
 	// We've received the stream channel. Start listening for activity.
@@ -115,7 +124,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agent.HandleStreamContent(msg.Content)
 		m.lastContent = m.agent.GetViewState().LastStreamedContent
 		m.viewport.SetContent(m.renderConversation(false))
-		m.viewport.GotoBottom()
+		m.safeGotoBottom()
 		return m, waitForActivity(m.sub)
 
 	case llm.StreamEndMsg:
@@ -123,21 +132,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sub = nil
 		m.lastContent = ""
 		m.viewport.SetContent(m.renderConversation(true))
-		m.viewport.GotoBottom()
+		m.safeGotoBottom()
 		return m, nil
 
 	case llm.AssistantToolCallMsg:
 		cmd = m.agent.HandleToolCallRequest(msg)
 		m.updateViewportHeight() // Adjust height if confirmation dialog appears
 		m.viewport.SetContent(m.renderConversation(true))
-		m.viewport.GotoBottom()
+		m.safeGotoBottom()
 		return m, cmd
 
 	case llm.ToolResultMsg:
 		cmd = m.agent.HandleToolResult(msg.ToolCallID, msg.Result)
 		m.updateViewportHeight() // Adjust height as confirmation state may change
 		m.viewport.SetContent(m.renderConversation(true))
-		m.viewport.GotoBottom()
+		m.safeGotoBottom()
 		return m, cmd
 
 	case llm.ErrorMsg:
@@ -145,7 +154,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 		m.sub = nil
 		m.viewport.SetContent(m.renderConversation(true))
-		m.viewport.GotoBottom()
+		m.safeGotoBottom()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -172,7 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = m.agent.HandleUserInput(prompt)
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderConversation(true))
-				m.viewport.GotoBottom()
+				m.safeGotoBottom()
 				return m, cmd
 			}
 		}
