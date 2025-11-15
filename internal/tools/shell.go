@@ -83,6 +83,5 @@ func (t *RunShellCommandTool) Execute(args string) (string, error) {
 		return "", fmt.Errorf("command failed with exit code: %v\nOutput:\n%s", err, string(output))
 	}
 
-	// Wrap output in a code block to preserve formatting when rendered as Markdown
-	return "```\n" + string(output) + "\n```", nil
+	return string(output), nil
 }

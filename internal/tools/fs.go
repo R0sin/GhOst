@@ -84,8 +84,7 @@ func (t *ListDirectoryTool) Execute(args string) (string, error) {
 		output.WriteString(fmt.Sprintf("%-12s %-10d %s %s\n", mode.String(), size, modTime, name))
 	}
 
-	// Wrap results in a code block to preserve formatting when rendered as Markdown
-	return "```\n" + output.String() + "```", nil
+	return output.String(), nil
 }
 
 // --- ReadFileTool ---
@@ -137,8 +136,7 @@ func (t *ReadFileTool) Execute(args string) (string, error) {
 		return "", fmt.Errorf("error reading file '%s': %w", toolArgs.Path, err)
 	}
 
-	// Wrap content in a code block to preserve formatting when rendered as Markdown
-	return "```\n" + string(content) + "\n```", nil
+	return string(content), nil
 }
 
 // --- WriteFileTool ---
@@ -290,8 +288,7 @@ func (t *SearchFileContentTool) Execute(args string) (string, error) {
 		return "No matches found.", nil
 	}
 
-	// Wrap results in a code block to preserve formatting when rendered as Markdown
-	return "```\n" + results.String() + "```", nil
+	return results.String(), nil
 }
 
 // --- GlobTool ---
@@ -385,8 +382,7 @@ func (t *GlobTool) Execute(args string) (string, error) {
 		return "No files matched the pattern.", nil
 	}
 
-	// Wrap results in a code block to preserve formatting when rendered as Markdown
-	return "```\n" + strings.Join(matches, "\n") + "\n```", nil
+	return strings.Join(matches, "\n"), nil
 }
 
 // --- ReplaceTool ---

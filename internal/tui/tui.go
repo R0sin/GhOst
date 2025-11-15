@@ -76,7 +76,7 @@ func (m *model) updateViewportHeight() {
 // NewModel creates the initial model for the TUI.
 func NewModel(client *llm.Client, modelName string) tea.Model {
 	ti := textarea.New()
-	ti.Placeholder = ""
+	ti.Placeholder = "输入你的问题... (Enter 发送)"
 	ti.Focus()
 
 	vp := viewport.New(0, 0)
@@ -173,7 +173,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
+			// If loading, interrupt the stream; otherwise quit
+			if m.loading {
+				m.loading = false
+				m.sub = nil
+				m.lastContent = ""
+				m.err = fmt.Errorf("用户中断生成")
+				m.viewport.SetContent(m.renderConversation(true))
+				m.safeGotoBottom()
+				return m, nil
+			}
+			return m, tea.Quit
+		case tea.KeyCtrlD, tea.KeyEsc:
+			// Always quit on Ctrl+D or Esc
 			return m, tea.Quit
 		case tea.KeyEnter:
 			prompt := strings.TrimSpace(m.textarea.Value())
@@ -228,9 +241,12 @@ func (m model) View() string {
 // helpView renders the help text at the bottom.
 func (m model) helpView() string {
 	if m.agent.GetViewState().IsConfirming {
-		return helpStyle.Render("y: confirm | n: deny | ctrl+c: quit")
+		return helpStyle.Render("y: confirm | n: deny | esc/ctrl+d: quit")
 	}
-	return helpStyle.Render("enter: send | ctrl+c: quit")
+	if m.loading {
+		return helpStyle.Render("ctrl+c: 中断生成 | esc/ctrl+d: quit")
+	}
+	return helpStyle.Render("enter: send | esc/ctrl+d: quit")
 }
 
 // renderConversation renders the message history.
@@ -240,8 +256,11 @@ func (m model) renderConversation(fullRender bool) string {
 
 	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle())
 
+	// Track which messages we've already rendered (to avoid duplicates when merging tool results)
+	rendered := make(map[int]bool)
+
 	for i, msg := range viewState.Messages {
-		if msg.Role == "system" {
+		if msg.Role == "system" || rendered[i] {
 			continue
 		}
 
@@ -253,31 +272,169 @@ func (m model) renderConversation(fullRender bool) string {
 			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("70"))
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
 			b.WriteString(msg.Content + "\n\n")
+			rendered[i] = true
 		} else if msg.Role == "assistant" {
 			// Skip empty assistant messages (e.g., during streaming setup or tool calls without content)
 			if msg.Content == "" && len(msg.ToolCalls) == 0 {
+				rendered[i] = true
 				continue
 			}
-			// Skip assistant messages that only contain tool calls (no text content to display)
+
+			// 检查这是否是一个只有 ToolCalls 的消息（没有文本内容）
+			// 如果是，我们需要查找后续的 tool 结果和最终的 assistant 回复，合并显示
 			if msg.Content == "" && len(msg.ToolCalls) > 0 {
-				continue
-			}
-
-			roleText = "Tachigoma"
-			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
-			b.WriteString(roleStyle.Render(roleText) + ":\n")
-
-			if i == len(viewState.Messages)-1 && !fullRender {
-				b.WriteString(m.lastContent) // Use the live content for the last message
-			} else {
-				renderedContent, err := renderer.Render(msg.Content)
-				if err != nil {
-					renderedContent = msg.Content
+				// 这是一个工具调用消息，查找后续的最终回复
+				finalResponseIdx := -1
+				for j := i + 1; j < len(viewState.Messages); j++ {
+					if viewState.Messages[j].Role == "assistant" && viewState.Messages[j].Content != "" {
+						finalResponseIdx = j
+						break
+					}
 				}
-				b.WriteString(renderedContent + "\n")
+
+				// 显示 Tachigoma 标题
+				roleText = "Tachigoma"
+				roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
+				b.WriteString(roleStyle.Render(roleText) + ":\n")
+
+				// 构建工具调用块的内容
+				var toolBlockBuilder strings.Builder
+
+				toolCallStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))      // 橙色
+				toolArgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))       // 灰色
+				resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))   // 浅绿色
+				resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248")) // 浅灰色
+
+				for _, toolCall := range msg.ToolCalls {
+					toolBlockBuilder.WriteString(toolCallStyle.Render(fmt.Sprintf("▶ 调用工具: %s", toolCall.Function.Name)) + "\n")
+					if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
+						toolBlockBuilder.WriteString(toolArgStyle.Render(fmt.Sprintf("  参数: %s", toolCall.Function.Arguments)) + "\n")
+					}
+
+					// 查找对应的工具结果
+					for j := i + 1; j < len(viewState.Messages); j++ {
+						if viewState.Messages[j].Role == "tool" && viewState.Messages[j].ToolCallID == toolCall.ID {
+							toolBlockBuilder.WriteString(resultLabelStyle.Render("◀ 结果:") + "\n")
+							trimmedContent := strings.TrimSpace(viewState.Messages[j].Content)
+
+							// 截断过长的输出
+							const maxLines = 10
+							const maxChars = 500
+							lines := strings.Split(trimmedContent, "\n")
+							truncated := false
+
+							if len(trimmedContent) > maxChars || len(lines) > maxLines {
+								truncated = true
+								if len(trimmedContent) > maxChars {
+									trimmedContent = trimmedContent[:maxChars]
+									trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
+								}
+								lines = strings.Split(trimmedContent, "\n")
+								if len(lines) > maxLines {
+									lines = lines[:maxLines]
+								}
+								trimmedContent = strings.Join(lines, "\n")
+							}
+
+							indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n   ")
+							toolBlockBuilder.WriteString(resultContentStyle.Render("   " + indentedContent))
+
+							if truncated {
+								truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
+								toolBlockBuilder.WriteString(truncateStyle.Render("\n   ... (输出已截断)"))
+							}
+							toolBlockBuilder.WriteString("\n")
+							rendered[j] = true
+							break
+						}
+					}
+				}
+
+				// 用边框包裹工具调用块
+				toolBoxStyle := lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(lipgloss.Color("240")).
+					Padding(0, 1).
+					MarginLeft(2)
+
+				toolBlock := toolBoxStyle.Render(strings.TrimRight(toolBlockBuilder.String(), "\n"))
+				b.WriteString(toolBlock + "\n\n")
+
+				// 如果找到了最终回复，一起显示
+				if finalResponseIdx != -1 {
+					finalMsg := viewState.Messages[finalResponseIdx]
+					if finalResponseIdx == len(viewState.Messages)-1 && !fullRender {
+						b.WriteString(m.lastContent + "\n")
+					} else {
+						renderedContent, err := renderer.Render(finalMsg.Content)
+						if err != nil {
+							renderedContent = finalMsg.Content
+						}
+						b.WriteString(renderedContent + "\n")
+					}
+					rendered[finalResponseIdx] = true // 标记最终回复已渲染
+				}
+
+				rendered[i] = true
+			} else if msg.Content != "" {
+				// 这是一个有文本内容的 assistant 消息
+				// 如果它还没被渲染（即不是被合并到前面的工具调用中），则单独显示
+				if !rendered[i] {
+					roleText = "Tachigoma"
+					roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
+					b.WriteString(roleStyle.Render(roleText) + ":\n")
+
+					if i == len(viewState.Messages)-1 && !fullRender {
+						b.WriteString(m.lastContent + "\n")
+					} else {
+						renderedContent, err := renderer.Render(msg.Content)
+						if err != nil {
+							renderedContent = msg.Content
+						}
+						b.WriteString(renderedContent + "\n")
+					}
+					rendered[i] = true
+				}
+			}
+		} else if msg.Role == "tool" {
+			// 如果工具消息还没被合并渲染（可能是孤立的工具结果），单独显示
+			if !rendered[i] {
+				resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+				resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+
+				b.WriteString(resultLabelStyle.Render("  ✓ 工具结果:") + "\n")
+				trimmedContent := strings.TrimSpace(msg.Content)
+
+				// 截断过长的输出
+				const maxLines = 10
+				const maxChars = 500
+				lines := strings.Split(trimmedContent, "\n")
+				truncated := false
+
+				if len(trimmedContent) > maxChars || len(lines) > maxLines {
+					truncated = true
+					if len(trimmedContent) > maxChars {
+						trimmedContent = trimmedContent[:maxChars]
+						trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
+					}
+					lines = strings.Split(trimmedContent, "\n")
+					if len(lines) > maxLines {
+						lines = lines[:maxLines]
+					}
+					trimmedContent = strings.Join(lines, "\n")
+				}
+
+				indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n     ")
+				b.WriteString(resultContentStyle.Render("     " + indentedContent))
+
+				if truncated {
+					truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
+					b.WriteString(truncateStyle.Render("\n     ... (输出已截断)"))
+				}
+				b.WriteString("\n\n")
+				rendered[i] = true
 			}
 		}
-		// Note: "tool" role messages are not displayed to the user, only sent to the LLM
 	}
 
 	if m.loading && len(m.lastContent) == 0 {
