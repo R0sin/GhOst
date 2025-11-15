@@ -81,10 +81,11 @@ func (t *ListDirectoryTool) Execute(args string) (string, error) {
 		}
 
 		// Format: permissions size modification_time name
-		output.WriteString(fmt.Sprintf("% -12s % -10d %s %s\n", mode.String(), size, modTime, name))
+		output.WriteString(fmt.Sprintf("%-12s %-10d %s %s\n", mode.String(), size, modTime, name))
 	}
 
-	return output.String(), nil
+	// Wrap results in a code block to preserve formatting when rendered as Markdown
+	return "```\n" + output.String() + "```", nil
 }
 
 // --- ReadFileTool ---
@@ -136,7 +137,8 @@ func (t *ReadFileTool) Execute(args string) (string, error) {
 		return "", fmt.Errorf("error reading file '%s': %w", toolArgs.Path, err)
 	}
 
-	return string(content), nil
+	// Wrap content in a code block to preserve formatting when rendered as Markdown
+	return "```\n" + string(content) + "\n```", nil
 }
 
 // --- WriteFileTool ---
@@ -262,7 +264,7 @@ func (t *SearchFileContentTool) Execute(args string) (string, error) {
 			file, err := os.Open(path)
 			if err != nil {
 				// Can't open, just log it and continue
-				results.WriteString(fmt.Sprintf("Could not open file %s: %v ", path, err))
+				results.WriteString(fmt.Sprintf("Could not open file %s: %v\n", path, err))
 				return nil
 			}
 			defer file.Close()
@@ -272,7 +274,7 @@ func (t *SearchFileContentTool) Execute(args string) (string, error) {
 			for scanner.Scan() {
 				if regex.MatchString(scanner.Text()) {
 					matchesFound++
-					results.WriteString(fmt.Sprintf("%s:%d: %s", path, lineNumber, scanner.Text()))
+					results.WriteString(fmt.Sprintf("%s:%d: %s\n", path, lineNumber, scanner.Text()))
 				}
 				lineNumber++
 			}
@@ -288,7 +290,8 @@ func (t *SearchFileContentTool) Execute(args string) (string, error) {
 		return "No matches found.", nil
 	}
 
-	return results.String(), nil
+	// Wrap results in a code block to preserve formatting when rendered as Markdown
+	return "```\n" + results.String() + "```", nil
 }
 
 // --- GlobTool ---
@@ -382,7 +385,8 @@ func (t *GlobTool) Execute(args string) (string, error) {
 		return "No files matched the pattern.", nil
 	}
 
-	return strings.Join(matches, "\n"), nil
+	// Wrap results in a code block to preserve formatting when rendered as Markdown
+	return "```\n" + strings.Join(matches, "\n") + "\n```", nil
 }
 
 // --- ReplaceTool ---

@@ -77,18 +77,12 @@ func (t *RunShellCommandTool) Execute(args string) (string, error) {
 	// Use CombinedOutput to get both stdout and stderr in one slice.
 	output, err := cmd.CombinedOutput()
 
-	// Prepare the result string.
-	var resultBuilder strings.Builder
-	resultBuilder.WriteString(fmt.Sprintf("Executing command: `%s`", toolArgs.Command))
 	if err != nil {
 		// If there was an error (e.g., non-zero exit code), we still want to return the output,
 		// as it often contains the error message from the command itself.
-		resultBuilder.WriteString(fmt.Sprintf("Status: Command failed with error: %v", err))
-	} else {
-		resultBuilder.WriteString("Status: Command executed successfully.")
+		return "", fmt.Errorf("command failed with exit code: %v\nOutput:\n%s", err, string(output))
 	}
-	resultBuilder.WriteString("--- Output ---")
-	resultBuilder.WriteString(string(output))
 
-	return resultBuilder.String(), nil
+	// Wrap output in a code block to preserve formatting when rendered as Markdown
+	return "```\n" + string(output) + "\n```", nil
 }

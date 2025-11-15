@@ -29,29 +29,21 @@ type Agent struct {
 
 // NewAgent creates a new agent.
 func NewAgent(client *Client, modelName string) *Agent {
-	// Initialize the tool registry and register tools.
+	// Initialize and register all available tools.
+	availableTools := []tools.Tool{
+		&tools.ListDirectoryTool{},
+		&tools.ReadFileTool{},
+		&tools.WriteFileTool{},
+		&tools.SearchFileContentTool{},
+		&tools.GlobTool{},
+		&tools.ReplaceTool{},
+		&tools.RunShellCommandTool{},
+	}
+
 	toolRegistry := make(map[string]tools.Tool)
-
-	listDirTool := &tools.ListDirectoryTool{}
-	toolRegistry[listDirTool.Name()] = listDirTool
-
-	readFileTool := &tools.ReadFileTool{}
-	toolRegistry[readFileTool.Name()] = readFileTool
-
-	writeFileTool := &tools.WriteFileTool{}
-	toolRegistry[writeFileTool.Name()] = writeFileTool
-
-	searchFileContentTool := &tools.SearchFileContentTool{}
-	toolRegistry[searchFileContentTool.Name()] = searchFileContentTool
-
-	globTool := &tools.GlobTool{}
-	toolRegistry[globTool.Name()] = globTool
-
-	replaceTool := &tools.ReplaceTool{}
-	toolRegistry[replaceTool.Name()] = replaceTool
-
-	runShellTool := &tools.RunShellCommandTool{}
-	toolRegistry[runShellTool.Name()] = runShellTool
+	for _, tool := range availableTools {
+		toolRegistry[tool.Name()] = tool
+	}
 
 	return &Agent{
 		client:       client,

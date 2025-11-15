@@ -37,6 +37,29 @@ func waitForActivity(sub chan tea.Msg) tea.Cmd {
 	}
 }
 
+// updateViewportHeight adjusts the viewport height based on confirmation state.
+func (m *model) updateViewportHeight() {
+	viewState := m.agent.GetViewState()
+	if viewState.IsConfirming {
+		// Create a temporary confirmation box to measure its height
+		confirmStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("205")).
+			Padding(1, 2)
+
+		question := fmt.Sprintf(
+			"Tachigoma wants to run the tool: %s\n\nArguments:\n%s\n\nDo you want to allow this?",
+			viewState.ConfirmingToolCall.Function.Name,
+			viewState.ConfirmingToolCall.Function.Arguments,
+		)
+		confirmationBox := confirmStyle.Render(question)
+		confirmationBoxHeight := lipgloss.Height(confirmationBox)
+		m.viewport.Height = m.availableHeight - confirmationBoxHeight
+	} else {
+		m.viewport.Height = m.availableHeight
+	}
+}
+
 // toolResultMsg is sent when a tool has finished executing.
 // It is defined in the llm package but handled here.
 
@@ -105,12 +128,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case llm.AssistantToolCallMsg:
 		cmd = m.agent.HandleToolCallRequest(msg)
+		m.updateViewportHeight() // Adjust height if confirmation dialog appears
 		m.viewport.SetContent(m.renderConversation(true))
 		m.viewport.GotoBottom()
 		return m, cmd
 
 	case llm.ToolResultMsg:
 		cmd = m.agent.HandleToolResult(msg.ToolCallID, msg.Result)
+		m.updateViewportHeight() // Adjust height as confirmation state may change
 		m.viewport.SetContent(m.renderConversation(true))
 		m.viewport.GotoBottom()
 		return m, cmd
@@ -129,9 +154,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				cmd = m.agent.HandleConfirmation(true)
+				m.updateViewportHeight() // Restore height after confirmation
 				return m, cmd
 			case "n", "N":
 				cmd = m.agent.HandleConfirmation(false)
+				m.updateViewportHeight() // Restore height after denial
 				return m, cmd
 			}
 		}
@@ -180,10 +207,6 @@ func (m model) View() string {
 		confirmationBox = confirmStyle.Render(question)
 	}
 
-	// Dynamically set the viewport height based on whether the confirmation box is visible.
-	confirmationBoxHeight := lipgloss.Height(confirmationBox)
-	m.viewport.Height = m.availableHeight - confirmationBoxHeight
-
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		confirmationBox, // Will be an empty string if not confirming
@@ -221,7 +244,16 @@ func (m model) renderConversation(fullRender bool) string {
 			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("70"))
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
 			b.WriteString(msg.Content + "\n\n")
-		} else {
+		} else if msg.Role == "assistant" {
+			// Skip empty assistant messages (e.g., during streaming setup or tool calls without content)
+			if msg.Content == "" && len(msg.ToolCalls) == 0 {
+				continue
+			}
+			// Skip assistant messages that only contain tool calls (no text content to display)
+			if msg.Content == "" && len(msg.ToolCalls) > 0 {
+				continue
+			}
+
 			roleText = "Tachigoma"
 			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
 			b.WriteString(roleStyle.Render(roleText) + ":\n")
@@ -236,6 +268,7 @@ func (m model) renderConversation(fullRender bool) string {
 				b.WriteString(renderedContent + "\n")
 			}
 		}
+		// Note: "tool" role messages are not displayed to the user, only sent to the LLM
 	}
 
 	if m.loading && len(m.lastContent) == 0 {
