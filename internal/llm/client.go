@@ -137,7 +137,6 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 
 	// Variables to aggregate the response
 	var toolCalls []ToolCall
-	finishReason := ""
 
 	reader := bufio.NewReader(resp.Body)
 	for {
@@ -168,7 +167,6 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 
 		if len(streamResp.Choices) > 0 {
 			choice := streamResp.Choices[0]
-			finishReason = choice.FinishReason
 
 			// Aggregate content
 			if choice.Delta.Content != "" {
@@ -197,7 +195,7 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 	}
 
 	// After stream, check for tool calls
-	if finishReason == "tool_calls" {
+	if len(toolCalls) > 0 {
 		// Create the assistant's message with the tool call requests.
 		assistantMessage := Message{
 			Role:      "assistant",

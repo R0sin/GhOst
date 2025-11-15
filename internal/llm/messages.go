@@ -102,3 +102,8 @@ type ToolResultMsg struct {
 	ToolCallID string
 	Result     string
 }
+
+// ConfirmationRequiredMsg is sent when a tool requires user confirmation.
+type ConfirmationRequiredMsg struct {
+	ToolCall ToolCall
+}

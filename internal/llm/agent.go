@@ -116,7 +116,15 @@ func (a *Agent) HandleStreamContent(content string) {
 
 // HandleToolCallRequest sets up the agent to process tool calls.
 func (a *Agent) HandleToolCallRequest(msg AssistantToolCallMsg) tea.Cmd {
-	a.messages = append(a.messages, msg.Message)
+	// 如果最后一条消息是 assistant 消息（在流式输出过程中创建的），
+	// 我们应该将 ToolCalls 添加到这条消息中，而不是创建新消息
+	if len(a.messages) > 0 && a.messages[len(a.messages)-1].Role == "assistant" {
+		// 更新现有的 assistant 消息，添加 ToolCalls
+		a.messages[len(a.messages)-1].ToolCalls = msg.Message.ToolCalls
+	} else {
+		// 否则，添加新的 assistant 消息
+		a.messages = append(a.messages, msg.Message)
+	}
 	a.pendingToolCalls = msg.Message.ToolCalls
 	a.lastStreamedContent = ""
 	return a.processToolCalls()
@@ -165,7 +173,10 @@ func (a *Agent) processToolCalls() tea.Cmd {
 	if tool.RequiresConfirmation() {
 		a.confirmingToolCall = toolCall
 		a.isConfirming = true
-		return nil
+		// 返回一个命令来通知 UI 需要确认，而不是返回 nil
+		return func() tea.Msg {
+			return ConfirmationRequiredMsg{ToolCall: toolCall}
+		}
 	}
 
 	a.pendingToolCalls = a.pendingToolCalls[1:]

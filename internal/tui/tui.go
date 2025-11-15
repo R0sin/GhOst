@@ -140,6 +140,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewportHeight() // Adjust height if confirmation dialog appears
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
+		// 如果流订阅通道还存在，需要继续监听以接收 StreamEndMsg
+		if m.sub != nil {
+			return m, tea.Batch(cmd, waitForActivity(m.sub))
+		}
 		return m, cmd
 
 	case llm.ToolResultMsg:
@@ -148,6 +152,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
 		return m, cmd
+
+	case llm.ConfirmationRequiredMsg:
+		// 工具需要确认，更新视图以显示确认对话框
+		m.updateViewportHeight()
+		m.viewport.SetContent(m.renderConversation(true))
+		m.safeGotoBottom()
+		// 如果流订阅通道还存在，需要继续监听
+		if m.sub != nil {
+			return m, waitForActivity(m.sub)
+		}
+		return m, nil
 
 	case llm.ErrorMsg:
 		m.loading = false
@@ -280,121 +295,136 @@ func (m model) renderConversation(fullRender bool) string {
 				continue
 			}
 
-			// 检查这是否是一个只有 ToolCalls 的消息（没有文本内容）
-			// 如果是，我们需要查找后续的 tool 结果和最终的 assistant 回复，合并显示
-			if msg.Content == "" && len(msg.ToolCalls) > 0 {
-				// 这是一个工具调用消息，查找后续的最终回复
-				finalResponseIdx := -1
-				for j := i + 1; j < len(viewState.Messages); j++ {
-					if viewState.Messages[j].Role == "assistant" && viewState.Messages[j].Content != "" {
-						finalResponseIdx = j
+			// 收集从当前位置开始的所有连续的 assistant→tool 对，直到遇到不再有工具调用的 assistant 消息
+			// 这样可以将整个工具调用链合并成一个连续的对话块
+			assistantIndices := []int{i}
+			j := i + 1
+			for j < len(viewState.Messages) {
+				// 跳过 tool 消息
+				if viewState.Messages[j].Role == "tool" {
+					j++
+					continue
+				}
+				// 如果遇到下一个 assistant 消息
+				if viewState.Messages[j].Role == "assistant" {
+					// 如果这个 assistant 消息有工具调用，将它加入序列
+					if len(viewState.Messages[j].ToolCalls) > 0 {
+						assistantIndices = append(assistantIndices, j)
+						j++
+						continue
+					} else if viewState.Messages[j].Content != "" {
+						// 如果这个 assistant 消息没有工具调用但有内容，这是最终回复
+						assistantIndices = append(assistantIndices, j)
 						break
 					}
 				}
+				break
+			}
 
-				// 显示 Tachigoma 标题
-				roleText = "Tachigoma"
-				roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
-				b.WriteString(roleStyle.Render(roleText) + ":\n")
+			// 显示 Tachigoma 标题（只显示一次）
+			roleText = "Tachigoma"
+			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
+			b.WriteString(roleStyle.Render(roleText) + ":\n")
 
-				// 构建工具调用块的内容
-				var toolBlockBuilder strings.Builder
+			toolCallStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))      // 橙色
+			toolArgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))       // 灰色
+			resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))   // 浅绿色
+			resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248")) // 浅灰色
 
-				toolCallStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))      // 橙色
-				toolArgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))       // 灰色
-				resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))   // 浅绿色
-				resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248")) // 浅灰色
+			// 遍历所有收集到的 assistant 消息
+			for idx, assistantIdx := range assistantIndices {
+				assistantMsg := viewState.Messages[assistantIdx]
+				isLast := idx == len(assistantIndices)-1
 
-				for _, toolCall := range msg.ToolCalls {
-					toolBlockBuilder.WriteString(toolCallStyle.Render(fmt.Sprintf("▶ 调用工具: %s", toolCall.Function.Name)) + "\n")
-					if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
-						toolBlockBuilder.WriteString(toolArgStyle.Render(fmt.Sprintf("  参数: %s", toolCall.Function.Arguments)) + "\n")
-					}
-
-					// 查找对应的工具结果
-					for j := i + 1; j < len(viewState.Messages); j++ {
-						if viewState.Messages[j].Role == "tool" && viewState.Messages[j].ToolCallID == toolCall.ID {
-							toolBlockBuilder.WriteString(resultLabelStyle.Render("◀ 结果:") + "\n")
-							trimmedContent := strings.TrimSpace(viewState.Messages[j].Content)
-
-							// 截断过长的输出
-							const maxLines = 10
-							const maxChars = 500
-							lines := strings.Split(trimmedContent, "\n")
-							truncated := false
-
-							if len(trimmedContent) > maxChars || len(lines) > maxLines {
-								truncated = true
-								if len(trimmedContent) > maxChars {
-									trimmedContent = trimmedContent[:maxChars]
-									trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
-								}
-								lines = strings.Split(trimmedContent, "\n")
-								if len(lines) > maxLines {
-									lines = lines[:maxLines]
-								}
-								trimmedContent = strings.Join(lines, "\n")
-							}
-
-							indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n   ")
-							toolBlockBuilder.WriteString(resultContentStyle.Render("   " + indentedContent))
-
-							if truncated {
-								truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
-								toolBlockBuilder.WriteString(truncateStyle.Render("\n   ... (输出已截断)"))
-							}
-							toolBlockBuilder.WriteString("\n")
-							rendered[j] = true
-							break
+				// 如果有文本内容，先显示文本内容
+				if assistantMsg.Content != "" {
+					if assistantIdx == len(viewState.Messages)-1 && !fullRender {
+						b.WriteString(m.lastContent)
+						if len(assistantMsg.ToolCalls) > 0 {
+							b.WriteString("\n\n")
 						}
-					}
-				}
-
-				// 用边框包裹工具调用块
-				toolBoxStyle := lipgloss.NewStyle().
-					Border(lipgloss.RoundedBorder()).
-					BorderForeground(lipgloss.Color("240")).
-					Padding(0, 1).
-					MarginLeft(2)
-
-				toolBlock := toolBoxStyle.Render(strings.TrimRight(toolBlockBuilder.String(), "\n"))
-				b.WriteString(toolBlock + "\n\n")
-
-				// 如果找到了最终回复，一起显示
-				if finalResponseIdx != -1 {
-					finalMsg := viewState.Messages[finalResponseIdx]
-					if finalResponseIdx == len(viewState.Messages)-1 && !fullRender {
-						b.WriteString(m.lastContent + "\n")
 					} else {
-						renderedContent, err := renderer.Render(finalMsg.Content)
+						renderedContent, err := renderer.Render(assistantMsg.Content)
 						if err != nil {
-							renderedContent = finalMsg.Content
+							renderedContent = assistantMsg.Content
 						}
-						b.WriteString(renderedContent + "\n")
+						b.WriteString(renderedContent)
+						if len(assistantMsg.ToolCalls) > 0 {
+							b.WriteString("\n")
+						}
 					}
-					rendered[finalResponseIdx] = true // 标记最终回复已渲染
 				}
 
-				rendered[i] = true
-			} else if msg.Content != "" {
-				// 这是一个有文本内容的 assistant 消息
-				// 如果它还没被渲染（即不是被合并到前面的工具调用中），则单独显示
-				if !rendered[i] {
-					roleText = "Tachigoma"
-					roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
-					b.WriteString(roleStyle.Render(roleText) + ":\n")
+				// 如果有工具调用，显示工具调用块
+				if len(assistantMsg.ToolCalls) > 0 {
+					var toolBlockBuilder strings.Builder
 
-					if i == len(viewState.Messages)-1 && !fullRender {
-						b.WriteString(m.lastContent + "\n")
-					} else {
-						renderedContent, err := renderer.Render(msg.Content)
-						if err != nil {
-							renderedContent = msg.Content
+					for _, toolCall := range assistantMsg.ToolCalls {
+						toolBlockBuilder.WriteString(toolCallStyle.Render(fmt.Sprintf("▶ 调用工具: %s", toolCall.Function.Name)) + "\n")
+						if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
+							toolBlockBuilder.WriteString(toolArgStyle.Render(fmt.Sprintf("  参数: %s", toolCall.Function.Arguments)) + "\n")
 						}
-						b.WriteString(renderedContent + "\n")
+
+						// 查找对应的工具结果
+						for k := assistantIdx + 1; k < len(viewState.Messages); k++ {
+							if viewState.Messages[k].Role == "tool" && viewState.Messages[k].ToolCallID == toolCall.ID {
+								toolBlockBuilder.WriteString(resultLabelStyle.Render("◀ 结果:") + "\n")
+								trimmedContent := strings.TrimSpace(viewState.Messages[k].Content)
+
+								// 截断过长的输出
+								const maxLines = 10
+								const maxChars = 500
+								lines := strings.Split(trimmedContent, "\n")
+								truncated := false
+
+								if len(trimmedContent) > maxChars || len(lines) > maxLines {
+									truncated = true
+									if len(trimmedContent) > maxChars {
+										trimmedContent = trimmedContent[:maxChars]
+										trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
+									}
+									lines = strings.Split(trimmedContent, "\n")
+									if len(lines) > maxLines {
+										lines = lines[:maxLines]
+									}
+									trimmedContent = strings.Join(lines, "\n")
+								}
+
+								indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n   ")
+								toolBlockBuilder.WriteString(resultContentStyle.Render("   " + indentedContent))
+
+								if truncated {
+									truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
+									toolBlockBuilder.WriteString(truncateStyle.Render("\n   ... (输出已截断)"))
+								}
+								toolBlockBuilder.WriteString("\n")
+								rendered[k] = true
+								break
+							}
+						}
 					}
-					rendered[i] = true
+
+					// 用边框包裹工具调用块
+					toolBoxStyle := lipgloss.NewStyle().
+						Border(lipgloss.RoundedBorder()).
+						BorderForeground(lipgloss.Color("240")).
+						Padding(0, 1).
+						MarginLeft(2)
+
+					toolBlock := toolBoxStyle.Render(strings.TrimRight(toolBlockBuilder.String(), "\n"))
+					b.WriteString(toolBlock + "\n")
+					if !isLast || assistantMsg.Content == "" {
+						b.WriteString("\n")
+					}
 				}
+
+				// 标记已渲染
+				rendered[assistantIdx] = true
+			}
+
+			// 在对话块结尾添加空行（如果不是最后一条消息）
+			if i != len(viewState.Messages)-1 {
+				b.WriteString("\n")
 			}
 		} else if msg.Role == "tool" {
 			// 如果工具消息还没被合并渲染（可能是孤立的工具结果），单独显示
