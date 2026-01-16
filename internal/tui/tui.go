@@ -373,15 +373,15 @@ func (m model) renderConversation(fullRender bool) string {
 
 								// 截断过长的输出
 								const maxLines = 10
-								const maxChars = 500
+								const maxRunes = 500
 								lines := strings.Split(trimmedContent, "\n")
 								truncated := false
 
-								if len(trimmedContent) > maxChars || len(lines) > maxLines {
+								runes := []rune(trimmedContent)
+								if len(runes) > maxRunes || len(lines) > maxLines {
 									truncated = true
-									if len(trimmedContent) > maxChars {
-										trimmedContent = trimmedContent[:maxChars]
-										trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
+									if len(runes) > maxRunes {
+										trimmedContent = string(runes[:maxRunes])
 									}
 									lines = strings.Split(trimmedContent, "\n")
 									if len(lines) > maxLines {
@@ -437,15 +437,15 @@ func (m model) renderConversation(fullRender bool) string {
 
 				// 截断过长的输出
 				const maxLines = 10
-				const maxChars = 500
+				const maxRunes = 500
 				lines := strings.Split(trimmedContent, "\n")
 				truncated := false
 
-				if len(trimmedContent) > maxChars || len(lines) > maxLines {
+				runes := []rune(trimmedContent)
+				if len(runes) > maxRunes || len(lines) > maxLines {
 					truncated = true
-					if len(trimmedContent) > maxChars {
-						trimmedContent = trimmedContent[:maxChars]
-						trimmedContent = strings.TrimRight(trimmedContent, "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f")
+					if len(runes) > maxRunes {
+						trimmedContent = string(runes[:maxRunes])
 					}
 					lines = strings.Split(trimmedContent, "\n")
 					if len(lines) > maxLines {
