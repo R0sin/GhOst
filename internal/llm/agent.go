@@ -1,11 +1,12 @@
 package llm
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"tachigoma/internal/tools"
 
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 //go:embed prompt.md
@@ -16,6 +17,10 @@ type Agent struct {
 	client       *Client
 	modelName    string
 	toolRegistry map[string]tools.Tool
+
+	// Context for cancellation
+	ctx      context.Context
+	cancelFn context.CancelFunc
 
 	// State
 	messages           []Message
@@ -45,10 +50,14 @@ func NewAgent(client *Client, modelName string) *Agent {
 		toolRegistry[tool.Name()] = tool
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Agent{
 		client:       client,
 		modelName:    modelName,
 		toolRegistry: toolRegistry,
+		ctx:          ctx,
+		cancelFn:     cancel,
 		messages: []Message{
 			{Role: "system", Content: systemPromptContent},
 		},
@@ -73,6 +82,18 @@ func (a *Agent) GetViewState() ViewState {
 	}
 }
 
+// Cancel cancels any ongoing request.
+func (a *Agent) Cancel() {
+	if a.cancelFn != nil {
+		a.cancelFn()
+	}
+}
+
+// ResetContext creates a new context for the next request after cancellation.
+func (a *Agent) ResetContext() {
+	a.ctx, a.cancelFn = context.WithCancel(context.Background())
+}
+
 // getAvailableToolsAsJSON converts the registered tools into the JSON format expected by the API.
 func (a *Agent) getAvailableToolsAsJSON() []Tool {
 	var availableTools []Tool
@@ -95,8 +116,10 @@ func (a *Agent) getAvailableToolsAsJSON() []Tool {
 
 // HandleUserInput starts a new conversation turn.
 func (a *Agent) HandleUserInput(input string) tea.Cmd {
+	// Reset context for new request
+	a.ResetContext()
 	a.messages = append(a.messages, Message{Role: "user", Content: input})
-	return a.client.CompletionStream(a.messages, a.modelName, a.getAvailableToolsAsJSON())
+	return a.client.CompletionStream(a.ctx, a.messages, a.modelName, a.getAvailableToolsAsJSON())
 }
 
 // HandleStreamStart prepares the agent for a new stream of messages.
@@ -159,7 +182,7 @@ func (a *Agent) HandleConfirmation(confirmed bool) tea.Cmd {
 
 func (a *Agent) processToolCalls() tea.Cmd {
 	if len(a.pendingToolCalls) == 0 {
-		return a.client.CompletionStream(a.messages, a.modelName, a.getAvailableToolsAsJSON())
+		return a.client.CompletionStream(a.ctx, a.messages, a.modelName, a.getAvailableToolsAsJSON())
 	}
 
 	toolCall := a.pendingToolCalls[0]

@@ -191,6 +191,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			// If loading, interrupt the stream; otherwise quit
 			if m.loading {
+				m.agent.Cancel() // Cancel ongoing HTTP request
 				m.loading = false
 				m.sub = nil
 				m.lastContent = ""

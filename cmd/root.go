@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -8,7 +9,7 @@ import (
 	"tachigoma/internal/llm"
 	"tachigoma/internal/tui"
 
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -63,7 +64,8 @@ func directAPICall(p string) {
 		{Role: "user", Content: p},
 	}
 
-	response, err := client.Completion(messages, model)
+	ctx := context.Background()
+	response, err := client.Completion(ctx, messages, model)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nError calling LLM API: %v\n", err)
 		os.Exit(1)

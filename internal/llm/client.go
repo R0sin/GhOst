@@ -3,6 +3,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,7 +30,7 @@ func NewClient(apiURL, apiKey string) *Client {
 }
 
 // Completion sends a list of messages to the LLM and returns the response.
-func (c *Client) Completion(messages []Message, model string) (string, error) {
+func (c *Client) Completion(ctx context.Context, messages []Message, model string) (string, error) {
 	// For this non-streaming mode, we won't send tools, just a simple chat.
 	reqBody := CompletionRequest{
 		Model:    model,
@@ -41,7 +42,7 @@ func (c *Client) Completion(messages []Message, model string) (string, error) {
 		return "", fmt.Errorf("error marshalling request body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.apiURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
@@ -80,13 +81,14 @@ func (c *Client) Completion(messages []Message, model string) (string, error) {
 
 // --- Client Methods ---
 // CompletionStream sends a list of messages and returns a command that streams the response.
-func (c *Client) CompletionStream(messages []Message, model string, tools []Tool) tea.Cmd {
+// The context can be used to cancel the request.
+func (c *Client) CompletionStream(ctx context.Context, messages []Message, model string, tools []Tool) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan tea.Msg)
 
 		go func() {
 			defer close(ch)
-			c.runCompletionStream(messages, model, tools, ch)
+			c.runCompletionStream(ctx, messages, model, tools, ch)
 		}()
 
 		return Stream(ch)
@@ -94,7 +96,7 @@ func (c *Client) CompletionStream(messages []Message, model string, tools []Tool
 }
 
 // runCompletionStream handles the actual logic of streaming, tool calls, and looping.
-func (c *Client) runCompletionStream(messages []Message, model string, tools []Tool, ch chan tea.Msg) {
+func (c *Client) runCompletionStream(ctx context.Context, messages []Message, model string, tools []Tool, ch chan tea.Msg) {
 	reqBody := CompletionRequest{
 		Model:    model,
 		Messages: messages,
@@ -108,7 +110,7 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 		return
 	}
 
-	req, err := http.NewRequest("POST", c.apiURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		ch <- ErrorMsg{fmt.Errorf("error creating request: %w", err)}
 		return
@@ -122,6 +124,11 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// Check if it was a context cancellation
+		if ctx.Err() != nil {
+			ch <- ErrorMsg{fmt.Errorf("request cancelled: %w", ctx.Err())}
+			return
+		}
 		ch <- ErrorMsg{fmt.Errorf("error making request: %w", err)}
 		return
 	}
@@ -140,9 +147,22 @@ func (c *Client) runCompletionStream(messages []Message, model string, tools []T
 
 	reader := bufio.NewReader(resp.Body)
 	for {
+		// Check for context cancellation before reading
+		select {
+		case <-ctx.Done():
+			ch <- ErrorMsg{fmt.Errorf("stream cancelled: %w", ctx.Err())}
+			return
+		default:
+		}
+
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err != io.EOF {
+				// Check if it was a context cancellation
+				if ctx.Err() != nil {
+					ch <- ErrorMsg{fmt.Errorf("stream cancelled: %w", ctx.Err())}
+					return
+				}
 				ch <- ErrorMsg{fmt.Errorf("error reading stream: %w", err)}
 			}
 			break // End of stream
