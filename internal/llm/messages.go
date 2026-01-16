@@ -1,7 +1,5 @@
 package llm
 
-import "github.com/charmbracelet/bubbletea"
-
 // --- API Data Structures ---
 
 // Message is a single message in a chat completion request.
@@ -73,10 +71,28 @@ type StreamCompletionResponse struct {
 	Choices []StreamChoice `json:"choices"`
 }
 
-// --- TUI Message Types ---
+// --- Stream Event Types (UI-independent) ---
 
-// Stream is a channel of messages from the LLM stream.
-type Stream chan tea.Msg
+// StreamEventType represents the type of stream event.
+type StreamEventType int
+
+const (
+	EventStreamStart StreamEventType = iota
+	EventStreamContent
+	EventStreamEnd
+	EventToolCall
+	EventError
+)
+
+// StreamEvent is a UI-independent event from the LLM stream.
+type StreamEvent struct {
+	Type      StreamEventType
+	Content   string    // For EventStreamContent
+	ToolCalls []ToolCall // For EventToolCall
+	Error     error     // For EventError
+}
+
+// --- TUI Message Types (used by Agent/TUI layer) ---
 
 // StreamStartMsg is sent when the stream starts.
 type StreamStartMsg struct{}

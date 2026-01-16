@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/charmbracelet/bubbletea"
 )
 
 // Client is the API client for the LLM.
@@ -80,23 +78,22 @@ func (c *Client) Completion(ctx context.Context, messages []Message, model strin
 }
 
 // --- Client Methods ---
-// CompletionStream sends a list of messages and returns a command that streams the response.
-// The context can be used to cancel the request.
-func (c *Client) CompletionStream(ctx context.Context, messages []Message, model string, tools []Tool) tea.Cmd {
-	return func() tea.Msg {
-		ch := make(chan tea.Msg)
 
-		go func() {
-			defer close(ch)
-			c.runCompletionStream(ctx, messages, model, tools, ch)
-		}()
+// CompletionStream sends a list of messages and returns a channel that streams events.
+// The context can be used to cancel the request. The channel is closed when the stream ends.
+func (c *Client) CompletionStream(ctx context.Context, messages []Message, model string, tools []Tool) <-chan StreamEvent {
+	ch := make(chan StreamEvent)
 
-		return Stream(ch)
-	}
+	go func() {
+		defer close(ch)
+		c.runCompletionStream(ctx, messages, model, tools, ch)
+	}()
+
+	return ch
 }
 
 // runCompletionStream handles the actual logic of streaming, tool calls, and looping.
-func (c *Client) runCompletionStream(ctx context.Context, messages []Message, model string, tools []Tool, ch chan tea.Msg) {
+func (c *Client) runCompletionStream(ctx context.Context, messages []Message, model string, tools []Tool, ch chan StreamEvent) {
 	reqBody := CompletionRequest{
 		Model:    model,
 		Messages: messages,
@@ -106,13 +103,13 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		ch <- ErrorMsg{fmt.Errorf("error marshalling request body: %w", err)}
+		ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("error marshalling request body: %w", err)}
 		return
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		ch <- ErrorMsg{fmt.Errorf("error creating request: %w", err)}
+		ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("error creating request: %w", err)}
 		return
 	}
 
@@ -126,21 +123,21 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 	if err != nil {
 		// Check if it was a context cancellation
 		if ctx.Err() != nil {
-			ch <- ErrorMsg{fmt.Errorf("request cancelled: %w", ctx.Err())}
+			ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("request cancelled: %w", ctx.Err())}
 			return
 		}
-		ch <- ErrorMsg{fmt.Errorf("error making request: %w", err)}
+		ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("error making request: %w", err)}
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		ch <- ErrorMsg{fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))}
+		ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))}
 		return
 	}
 
-	ch <- StreamStartMsg{}
+	ch <- StreamEvent{Type: EventStreamStart}
 
 	// Variables to aggregate the response
 	var toolCalls []ToolCall
@@ -150,7 +147,7 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 		// Check for context cancellation before reading
 		select {
 		case <-ctx.Done():
-			ch <- ErrorMsg{fmt.Errorf("stream cancelled: %w", ctx.Err())}
+			ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("stream cancelled: %w", ctx.Err())}
 			return
 		default:
 		}
@@ -160,10 +157,10 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 			if err != io.EOF {
 				// Check if it was a context cancellation
 				if ctx.Err() != nil {
-					ch <- ErrorMsg{fmt.Errorf("stream cancelled: %w", ctx.Err())}
+					ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("stream cancelled: %w", ctx.Err())}
 					return
 				}
-				ch <- ErrorMsg{fmt.Errorf("error reading stream: %w", err)}
+				ch <- StreamEvent{Type: EventError, Error: fmt.Errorf("error reading stream: %w", err)}
 			}
 			break // End of stream
 		}
@@ -188,9 +185,9 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 		if len(streamResp.Choices) > 0 {
 			choice := streamResp.Choices[0]
 
-			// Aggregate content
+			// Send content chunk
 			if choice.Delta.Content != "" {
-				ch <- StreamContentMsg{Content: choice.Delta.Content}
+				ch <- StreamEvent{Type: EventStreamContent, Content: choice.Delta.Content}
 			}
 
 			// Aggregate tool calls
@@ -216,19 +213,8 @@ func (c *Client) runCompletionStream(ctx context.Context, messages []Message, mo
 
 	// After stream, check for tool calls
 	if len(toolCalls) > 0 {
-		// Create the assistant's message with the tool call requests.
-		assistantMessage := Message{
-			Role:      "assistant",
-			ToolCalls: toolCalls,
-		}
-
-		// Send this message to the TUI. The TUI will handle execution,
-		// user confirmation, and continuing the conversation.
-		ch <- AssistantToolCallMsg{Message: assistantMessage}
-
-		// The rest of the stream processing for this turn is now complete.
-		// The TUI will initiate the next turn.
+		ch <- StreamEvent{Type: EventToolCall, ToolCalls: toolCalls}
 	}
 
-	ch <- StreamEndMsg{}
+	ch <- StreamEvent{Type: EventStreamEnd}
 }

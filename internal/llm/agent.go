@@ -114,12 +114,25 @@ func (a *Agent) getAvailableToolsAsJSON() []Tool {
 	return availableTools
 }
 
+// StreamChannelMsg carries the stream channel to the TUI layer.
+type StreamChannelMsg struct {
+	Channel <-chan StreamEvent
+}
+
 // HandleUserInput starts a new conversation turn.
 func (a *Agent) HandleUserInput(input string) tea.Cmd {
 	// Reset context for new request
 	a.ResetContext()
 	a.messages = append(a.messages, Message{Role: "user", Content: input})
-	return a.client.CompletionStream(a.ctx, a.messages, a.modelName, a.getAvailableToolsAsJSON())
+	return a.startStream()
+}
+
+// startStream creates a tea.Cmd that starts the completion stream.
+func (a *Agent) startStream() tea.Cmd {
+	return func() tea.Msg {
+		ch := a.client.CompletionStream(a.ctx, a.messages, a.modelName, a.getAvailableToolsAsJSON())
+		return StreamChannelMsg{Channel: ch}
+	}
 }
 
 // HandleStreamStart prepares the agent for a new stream of messages.
@@ -182,7 +195,7 @@ func (a *Agent) HandleConfirmation(confirmed bool) tea.Cmd {
 
 func (a *Agent) processToolCalls() tea.Cmd {
 	if len(a.pendingToolCalls) == 0 {
-		return a.client.CompletionStream(a.ctx, a.messages, a.modelName, a.getAvailableToolsAsJSON())
+		return a.startStream()
 	}
 
 	toolCall := a.pendingToolCalls[0]

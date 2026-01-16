@@ -20,8 +20,8 @@ var (
 type model struct {
 	viewport        viewport.Model
 	textarea        textarea.Model
-	agent           *llm.Agent   // The new core logic handler
-	sub             chan tea.Msg // Channel for receiving streaming messages
+	agent           *llm.Agent              // The new core logic handler
+	streamCh        <-chan llm.StreamEvent  // Channel for receiving streaming events
 	loading         bool
 	lastContent     string // Stores the live content of the current streaming message
 	err             error
@@ -31,10 +31,35 @@ type model struct {
 
 // --- TUI Messages ---
 
-// A command that waits for the next message from a subscription.
-func waitForActivity(sub chan tea.Msg) tea.Cmd {
+// waitForStreamEvent waits for the next event from the stream channel and converts it to a tea.Msg.
+func waitForStreamEvent(ch <-chan llm.StreamEvent) tea.Cmd {
 	return func() tea.Msg {
-		return <-sub
+		event, ok := <-ch
+		if !ok {
+			// Channel closed, stream ended
+			return llm.StreamEndMsg{}
+		}
+
+		// Convert StreamEvent to appropriate tea.Msg
+		switch event.Type {
+		case llm.EventStreamStart:
+			return llm.StreamStartMsg{}
+		case llm.EventStreamContent:
+			return llm.StreamContentMsg{Content: event.Content}
+		case llm.EventStreamEnd:
+			return llm.StreamEndMsg{}
+		case llm.EventToolCall:
+			return llm.AssistantToolCallMsg{
+				Message: llm.Message{
+					Role:      "assistant",
+					ToolCalls: event.ToolCalls,
+				},
+			}
+		case llm.EventError:
+			return llm.ErrorMsg{Err: event.Error}
+		default:
+			return nil
+		}
 	}
 }
 
@@ -108,28 +133,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true // Mark UI as ready after first resize
 		return m, nil
 
-	// We've received the stream channel. Start listening for activity.
-	case llm.Stream:
-		m.sub = msg
-		return m, waitForActivity(m.sub)
+	// We've received the stream channel from Agent. Start listening for events.
+	case llm.StreamChannelMsg:
+		m.streamCh = msg.Channel
+		return m, waitForStreamEvent(m.streamCh)
 
 	case llm.StreamStartMsg:
 		m.loading = true
 		m.err = nil
 		m.lastContent = ""
 		m.agent.HandleStreamStart()
-		return m, waitForActivity(m.sub)
+		return m, waitForStreamEvent(m.streamCh)
 
 	case llm.StreamContentMsg:
 		m.agent.HandleStreamContent(msg.Content)
 		m.lastContent = m.agent.GetViewState().LastStreamedContent
 		m.viewport.SetContent(m.renderConversation(false))
 		m.safeGotoBottom()
-		return m, waitForActivity(m.sub)
+		return m, waitForStreamEvent(m.streamCh)
 
 	case llm.StreamEndMsg:
 		m.loading = false
-		m.sub = nil
+		m.streamCh = nil
 		m.lastContent = ""
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
@@ -141,8 +166,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
 		// 如果流订阅通道还存在，需要继续监听以接收 StreamEndMsg
-		if m.sub != nil {
-			return m, tea.Batch(cmd, waitForActivity(m.sub))
+		if m.streamCh != nil {
+			return m, tea.Batch(cmd, waitForStreamEvent(m.streamCh))
 		}
 		return m, cmd
 
@@ -159,15 +184,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
 		// 如果流订阅通道还存在，需要继续监听
-		if m.sub != nil {
-			return m, waitForActivity(m.sub)
+		if m.streamCh != nil {
+			return m, waitForStreamEvent(m.streamCh)
 		}
 		return m, nil
 
 	case llm.ErrorMsg:
 		m.loading = false
 		m.err = msg.Err
-		m.sub = nil
+		m.streamCh = nil
 		m.viewport.SetContent(m.renderConversation(true))
 		m.safeGotoBottom()
 		return m, nil
@@ -193,7 +218,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.loading {
 				m.agent.Cancel() // Cancel ongoing HTTP request
 				m.loading = false
-				m.sub = nil
+				m.streamCh = nil
 				m.lastContent = ""
 				m.err = fmt.Errorf("用户中断生成")
 				m.viewport.SetContent(m.renderConversation(true))
