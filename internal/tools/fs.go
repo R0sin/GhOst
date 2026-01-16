@@ -435,8 +435,8 @@ func (t *ReplaceTool) Execute(args string) (string, error) {
 		return "", fmt.Errorf("invalid arguments for replace: %w", err)
 	}
 
-	if toolArgs.Path == "" || toolArgs.OldString == "" || toolArgs.NewString == "" {
-		return "", fmt.Errorf("path, old_string, and new_string arguments are required for replace")
+	if toolArgs.Path == "" || toolArgs.OldString == "" {
+		return "", fmt.Errorf("path and old_string arguments are required for replace")
 	}
 
 	// Read the file content
