@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // DefaultCommandTimeout is the default timeout for shell commands.
@@ -86,15 +88,23 @@ func (t *RunShellCommandTool) Execute(args string) (string, error) {
 	// Use CombinedOutput to get both stdout and stderr in one slice.
 	output, err := cmd.CombinedOutput()
 
+	// On Windows, convert GBK output to UTF-8
+	outputStr := string(output)
+	if runtime.GOOS == "windows" {
+		if decoded, decErr := simplifiedchinese.GBK.NewDecoder().Bytes(output); decErr == nil {
+			outputStr = string(decoded)
+		}
+	}
+
 	if err != nil {
 		// Check if the error was due to timeout
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("command timed out after %v\nPartial output:\n%s", DefaultCommandTimeout, string(output))
+			return "", fmt.Errorf("command timed out after %v\nPartial output:\n%s", DefaultCommandTimeout, outputStr)
 		}
 		// If there was an error (e.g., non-zero exit code), we still want to return the output,
 		// as it often contains the error message from the command itself.
-		return "", fmt.Errorf("command failed with exit code: %v\nOutput:\n%s", err, string(output))
+		return "", fmt.Errorf("command failed with exit code: %v\nOutput:\n%s", err, outputStr)
 	}
 
-	return string(output), nil
+	return outputStr, nil
 }
