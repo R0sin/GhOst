@@ -1,12 +1,17 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// DefaultCommandTimeout is the default timeout for shell commands.
+const DefaultCommandTimeout = 60 * time.Second
 
 // RunShellCommandTool defines the tool for executing shell commands.
 type RunShellCommandTool struct{}
@@ -49,7 +54,7 @@ func (t *RunShellCommandTool) RequiresConfirmation() bool {
 	return true
 }
 
-// Execute runs the shell command.
+// Execute runs the shell command with a timeout.
 func (t *RunShellCommandTool) Execute(args string) (string, error) {
 	var toolArgs RunShellCommandArgs
 	if err := json.Unmarshal([]byte(args), &toolArgs); err != nil {
@@ -60,13 +65,17 @@ func (t *RunShellCommandTool) Execute(args string) (string, error) {
 		return "", fmt.Errorf("command argument cannot be empty")
 	}
 
+	// Create context with timeout to prevent commands from running indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultCommandTimeout)
+	defer cancel()
+
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		// Windows 系统
-		cmd = exec.Command("cmd", "/C", toolArgs.Command)
+		cmd = exec.CommandContext(ctx, "cmd", "/C", toolArgs.Command)
 	} else {
 		// Linux, macOS, and other Unix-like systems
-		cmd = exec.Command("sh", "-c", toolArgs.Command)
+		cmd = exec.CommandContext(ctx, "sh", "-c", toolArgs.Command)
 	}
 
 	// Set the working directory if provided.
@@ -78,6 +87,10 @@ func (t *RunShellCommandTool) Execute(args string) (string, error) {
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
+		// Check if the error was due to timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("command timed out after %v\nPartial output:\n%s", DefaultCommandTimeout, string(output))
+		}
 		// If there was an error (e.g., non-zero exit code), we still want to return the output,
 		// as it often contains the error message from the command itself.
 		return "", fmt.Errorf("command failed with exit code: %v\nOutput:\n%s", err, string(output))
