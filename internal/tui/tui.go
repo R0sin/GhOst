@@ -12,9 +12,54 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// --- Styles ---
 var (
 	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
+	// Message role styles
+	userRoleStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("70"))
+	assistantRoleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
+
+	// Tool call styles
+	toolCallStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // Orange
+	toolArgStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // Gray
+	resultLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // Light green
+	resultContent  = lipgloss.NewStyle().Foreground(lipgloss.Color("248")) // Light gray
+	truncatedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
+
+	// Tool box style
+	toolBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(0, 1).
+			MarginLeft(2)
+
+	// Error style
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
+
+// --- Conversation Block Types ---
+
+// ToolCallWithResult pairs a tool call with its result.
+type ToolCallWithResult struct {
+	Call   llm.ToolCall
+	Result string
+}
+
+// AssistantSegment represents a segment of assistant response (content + optional tool calls).
+type AssistantSegment struct {
+	Content   string               // Text content before tool calls
+	ToolCalls []ToolCallWithResult // Tool calls in this segment
+}
+
+// ConversationBlock represents a renderable unit in the conversation.
+type ConversationBlock struct {
+	Type      string             // "user" or "assistant"
+	Content   string             // Text content (for user messages)
+	Segments  []AssistantSegment // Ordered segments (for assistant messages)
+	IsLastMsg bool               // Whether this is the last message
+	MsgIndex  int                // Original message index
+}
 
 // model is the state of our TUI application.
 type model struct {
@@ -290,213 +335,215 @@ func (m model) helpView() string {
 	return helpStyle.Render("enter: send | esc/ctrl+d: quit")
 }
 
+// --- Rendering Helper Functions ---
+
+// truncateContent truncates content to maxRunes characters and maxLines lines.
+// Returns the truncated content and whether truncation occurred.
+func truncateContent(content string, maxRunes, maxLines int) (string, bool) {
+	content = strings.TrimSpace(content)
+	lines := strings.Split(content, "\n")
+	truncated := false
+
+	runes := []rune(content)
+	if len(runes) > maxRunes {
+		truncated = true
+		content = string(runes[:maxRunes])
+		lines = strings.Split(content, "\n")
+	}
+
+	if len(lines) > maxLines {
+		truncated = true
+		lines = lines[:maxLines]
+		content = strings.Join(lines, "\n")
+	}
+
+	return content, truncated
+}
+
+// groupMessagesIntoBlocks converts raw messages into renderable conversation blocks.
+func groupMessagesIntoBlocks(messages []llm.Message) []ConversationBlock {
+	var blocks []ConversationBlock
+	processed := make(map[int]bool)
+
+	for i, msg := range messages {
+		if msg.Role == "system" || processed[i] {
+			continue
+		}
+
+		switch msg.Role {
+		case "user":
+			blocks = append(blocks, ConversationBlock{
+				Type:      "user",
+				Content:   msg.Content,
+				IsLastMsg: i == len(messages)-1,
+				MsgIndex:  i,
+			})
+			processed[i] = true
+
+		case "assistant":
+			// Skip empty assistant messages
+			if msg.Content == "" && len(msg.ToolCalls) == 0 {
+				processed[i] = true
+				continue
+			}
+
+			block := ConversationBlock{
+				Type:      "assistant",
+				MsgIndex:  i,
+				IsLastMsg: i == len(messages)-1,
+			}
+
+			// Create first segment from current message
+			segment := AssistantSegment{Content: msg.Content}
+			for _, tc := range msg.ToolCalls {
+				tcWithResult := ToolCallWithResult{Call: tc}
+				for j := i + 1; j < len(messages); j++ {
+					if messages[j].Role == "tool" && messages[j].ToolCallID == tc.ID {
+						tcWithResult.Result = messages[j].Content
+						processed[j] = true
+						break
+					}
+				}
+				segment.ToolCalls = append(segment.ToolCalls, tcWithResult)
+			}
+			block.Segments = append(block.Segments, segment)
+			processed[i] = true
+
+			// Check for follow-up assistant messages in the same turn
+			for j := i + 1; j < len(messages); j++ {
+				if processed[j] {
+					continue
+				}
+				if messages[j].Role == "tool" {
+					continue
+				}
+				if messages[j].Role == "assistant" {
+					// Create a new segment for this message
+					seg := AssistantSegment{Content: messages[j].Content}
+					for _, tc := range messages[j].ToolCalls {
+						tcWithResult := ToolCallWithResult{Call: tc}
+						for k := j + 1; k < len(messages); k++ {
+							if messages[k].Role == "tool" && messages[k].ToolCallID == tc.ID {
+								tcWithResult.Result = messages[k].Content
+								processed[k] = true
+								break
+							}
+						}
+						seg.ToolCalls = append(seg.ToolCalls, tcWithResult)
+					}
+					block.Segments = append(block.Segments, seg)
+					block.IsLastMsg = j == len(messages)-1
+					processed[j] = true
+
+					// If no tool calls, this is the final response, stop collecting
+					if len(messages[j].ToolCalls) == 0 {
+						break
+					}
+					continue
+				}
+				break
+			}
+
+			blocks = append(blocks, block)
+		}
+	}
+
+	return blocks
+}
+
+// renderUserBlock renders a user message block.
+func renderUserBlock(block ConversationBlock) string {
+	var b strings.Builder
+	b.WriteString(userRoleStyle.Render("You") + ":\n")
+	b.WriteString(block.Content + "\n\n")
+	return b.String()
+}
+
+// renderToolCallBlock renders the tool calls section with a border.
+func renderToolCallBlock(toolCalls []ToolCallWithResult) string {
+	var b strings.Builder
+
+	for _, tc := range toolCalls {
+		b.WriteString(toolCallStyle.Render(fmt.Sprintf("▶ 调用工具: %s", tc.Call.Function.Name)) + "\n")
+		if tc.Call.Function.Arguments != "" && tc.Call.Function.Arguments != "{}" {
+			b.WriteString(toolArgStyle.Render(fmt.Sprintf("  参数: %s", tc.Call.Function.Arguments)) + "\n")
+		}
+
+		if tc.Result != "" {
+			b.WriteString(resultLabel.Render("◀ 结果:") + "\n")
+			content, truncated := truncateContent(tc.Result, 500, 10)
+			indented := strings.ReplaceAll(content, "\n", "\n   ")
+			b.WriteString(resultContent.Render("   " + indented))
+			if truncated {
+				b.WriteString(truncatedStyle.Render("\n   ... (输出已截断)"))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	return toolBoxStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// renderAssistantBlock renders an assistant message block with ordered segments.
+func renderAssistantBlock(block ConversationBlock, renderer *glamour.TermRenderer, lastContent string, isStreaming bool) string {
+	var b strings.Builder
+	b.WriteString(assistantRoleStyle.Render("Tachigoma") + ":\n")
+
+	// Render each segment in order (content first, then tool calls)
+	for i, seg := range block.Segments {
+		isLastSegment := i == len(block.Segments)-1
+
+		// Render text content
+		if seg.Content != "" {
+			if block.IsLastMsg && isLastSegment && isStreaming {
+				// During streaming, show raw content
+				b.WriteString(lastContent)
+			} else {
+				// Full render with markdown
+				rendered, err := renderer.Render(seg.Content)
+				if err != nil {
+					rendered = seg.Content
+				}
+				b.WriteString(rendered)
+			}
+		}
+
+		// Render tool calls if any
+		if len(seg.ToolCalls) > 0 {
+			if seg.Content != "" {
+				b.WriteString("\n")
+			}
+			b.WriteString(renderToolCallBlock(seg.ToolCalls))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	return b.String()
+}
+
 // renderConversation renders the message history.
 func (m model) renderConversation(fullRender bool) string {
 	var b strings.Builder
 	viewState := m.agent.GetViewState()
 
 	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle())
+	blocks := groupMessagesIntoBlocks(viewState.Messages)
 
-	// Track which messages we've already rendered (to avoid duplicates when merging tool results)
-	rendered := make(map[int]bool)
-
-	for i, msg := range viewState.Messages {
-		if msg.Role == "system" || rendered[i] {
-			continue
-		}
-
-		var roleStyle lipgloss.Style
-		var roleText string
-
-		if msg.Role == "user" {
-			roleText = "You"
-			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("70"))
-			b.WriteString(roleStyle.Render(roleText) + ":\n")
-			b.WriteString(msg.Content + "\n\n")
-			rendered[i] = true
-		} else if msg.Role == "assistant" {
-			// Skip empty assistant messages (e.g., during streaming setup or tool calls without content)
-			if msg.Content == "" && len(msg.ToolCalls) == 0 {
-				rendered[i] = true
-				continue
-			}
-
-			// 收集从当前位置开始的所有连续的 assistant→tool 对，直到遇到不再有工具调用的 assistant 消息
-			// 这样可以将整个工具调用链合并成一个连续的对话块
-			assistantIndices := []int{i}
-			j := i + 1
-			for j < len(viewState.Messages) {
-				// 跳过 tool 消息
-				if viewState.Messages[j].Role == "tool" {
-					j++
-					continue
-				}
-				// 如果遇到下一个 assistant 消息
-				if viewState.Messages[j].Role == "assistant" {
-					// 如果这个 assistant 消息有工具调用，将它加入序列
-					if len(viewState.Messages[j].ToolCalls) > 0 {
-						assistantIndices = append(assistantIndices, j)
-						j++
-						continue
-					} else if viewState.Messages[j].Content != "" {
-						// 如果这个 assistant 消息没有工具调用但有内容，这是最终回复
-						assistantIndices = append(assistantIndices, j)
-						break
-					}
-				}
-				break
-			}
-
-			// 显示 Tachigoma 标题（只显示一次）
-			roleText = "Tachigoma"
-			roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("66"))
-			b.WriteString(roleStyle.Render(roleText) + ":\n")
-
-			toolCallStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))      // 橙色
-			toolArgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))       // 灰色
-			resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))   // 浅绿色
-			resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248")) // 浅灰色
-
-			// 遍历所有收集到的 assistant 消息
-			for idx, assistantIdx := range assistantIndices {
-				assistantMsg := viewState.Messages[assistantIdx]
-				isLast := idx == len(assistantIndices)-1
-
-				// 如果有文本内容，先显示文本内容
-				if assistantMsg.Content != "" {
-					if assistantIdx == len(viewState.Messages)-1 && !fullRender {
-						b.WriteString(m.lastContent)
-						if len(assistantMsg.ToolCalls) > 0 {
-							b.WriteString("\n\n")
-						}
-					} else {
-						renderedContent, err := renderer.Render(assistantMsg.Content)
-						if err != nil {
-							renderedContent = assistantMsg.Content
-						}
-						b.WriteString(renderedContent)
-						if len(assistantMsg.ToolCalls) > 0 {
-							b.WriteString("\n")
-						}
-					}
-				}
-
-				// 如果有工具调用，显示工具调用块
-				if len(assistantMsg.ToolCalls) > 0 {
-					var toolBlockBuilder strings.Builder
-
-					for _, toolCall := range assistantMsg.ToolCalls {
-						toolBlockBuilder.WriteString(toolCallStyle.Render(fmt.Sprintf("▶ 调用工具: %s", toolCall.Function.Name)) + "\n")
-						if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
-							toolBlockBuilder.WriteString(toolArgStyle.Render(fmt.Sprintf("  参数: %s", toolCall.Function.Arguments)) + "\n")
-						}
-
-						// 查找对应的工具结果
-						for k := assistantIdx + 1; k < len(viewState.Messages); k++ {
-							if viewState.Messages[k].Role == "tool" && viewState.Messages[k].ToolCallID == toolCall.ID {
-								toolBlockBuilder.WriteString(resultLabelStyle.Render("◀ 结果:") + "\n")
-								trimmedContent := strings.TrimSpace(viewState.Messages[k].Content)
-
-								// 截断过长的输出
-								const maxLines = 10
-								const maxRunes = 500
-								lines := strings.Split(trimmedContent, "\n")
-								truncated := false
-
-								runes := []rune(trimmedContent)
-								if len(runes) > maxRunes || len(lines) > maxLines {
-									truncated = true
-									if len(runes) > maxRunes {
-										trimmedContent = string(runes[:maxRunes])
-									}
-									lines = strings.Split(trimmedContent, "\n")
-									if len(lines) > maxLines {
-										lines = lines[:maxLines]
-									}
-									trimmedContent = strings.Join(lines, "\n")
-								}
-
-								indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n   ")
-								toolBlockBuilder.WriteString(resultContentStyle.Render("   " + indentedContent))
-
-								if truncated {
-									truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
-									toolBlockBuilder.WriteString(truncateStyle.Render("\n   ... (输出已截断)"))
-								}
-								toolBlockBuilder.WriteString("\n")
-								rendered[k] = true
-								break
-							}
-						}
-					}
-
-					// 用边框包裹工具调用块
-					toolBoxStyle := lipgloss.NewStyle().
-						Border(lipgloss.RoundedBorder()).
-						BorderForeground(lipgloss.Color("240")).
-						Padding(0, 1).
-						MarginLeft(2)
-
-					toolBlock := toolBoxStyle.Render(strings.TrimRight(toolBlockBuilder.String(), "\n"))
-					b.WriteString(toolBlock + "\n")
-					if !isLast || assistantMsg.Content == "" {
-						b.WriteString("\n")
-					}
-				}
-
-				// 标记已渲染
-				rendered[assistantIdx] = true
-			}
-
-			// 在对话块结尾添加空行（如果不是最后一条消息）
-			if i != len(viewState.Messages)-1 {
-				b.WriteString("\n")
-			}
-		} else if msg.Role == "tool" {
-			// 如果工具消息还没被合并渲染（可能是孤立的工具结果），单独显示
-			if !rendered[i] {
-				resultLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-				resultContentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
-
-				b.WriteString(resultLabelStyle.Render("  ✓ 工具结果:") + "\n")
-				trimmedContent := strings.TrimSpace(msg.Content)
-
-				// 截断过长的输出
-				const maxLines = 10
-				const maxRunes = 500
-				lines := strings.Split(trimmedContent, "\n")
-				truncated := false
-
-				runes := []rune(trimmedContent)
-				if len(runes) > maxRunes || len(lines) > maxLines {
-					truncated = true
-					if len(runes) > maxRunes {
-						trimmedContent = string(runes[:maxRunes])
-					}
-					lines = strings.Split(trimmedContent, "\n")
-					if len(lines) > maxLines {
-						lines = lines[:maxLines]
-					}
-					trimmedContent = strings.Join(lines, "\n")
-				}
-
-				indentedContent := strings.ReplaceAll(trimmedContent, "\n", "\n     ")
-				b.WriteString(resultContentStyle.Render("     " + indentedContent))
-
-				if truncated {
-					truncateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
-					b.WriteString(truncateStyle.Render("\n     ... (输出已截断)"))
-				}
-				b.WriteString("\n\n")
-				rendered[i] = true
-			}
+	for _, block := range blocks {
+		switch block.Type {
+		case "user":
+			b.WriteString(renderUserBlock(block))
+		case "assistant":
+			isStreaming := !fullRender && block.IsLastMsg
+			b.WriteString(renderAssistantBlock(block, renderer, m.lastContent, isStreaming))
 		}
 	}
 
+	// Render status line (loading indicator or error)
 	if m.loading && len(m.lastContent) == 0 {
-		b.WriteString("Tachigoma: ...\n")
+		b.WriteString(assistantRoleStyle.Render("Tachigoma") + ": ...\n")
 	} else if m.err != nil {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err)))
 	}
 
