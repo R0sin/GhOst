@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,12 +30,26 @@ var rootCmd = &cobra.Command{
 		var promptProvided bool
 		var currentPrompt string
 
+		// Read prompt from -p flag or positional args
 		if prompt != "" {
 			promptProvided = true
 			currentPrompt = prompt
 		} else if len(args) > 0 {
 			promptProvided = true
 			currentPrompt = strings.Join(args, " ")
+		}
+
+		// Check for pipe input (e.g., cat file.txt | tachigoma -p "explain")
+		pipeContent := readPipeInput()
+		if pipeContent != "" {
+			promptProvided = true
+			if currentPrompt != "" {
+				// Combine pipe content with user prompt
+				currentPrompt = fmt.Sprintf("以下是输入内容:\n```\n%s\n```\n\n%s", pipeContent, currentPrompt)
+			} else {
+				// Only pipe content, no additional prompt
+				currentPrompt = pipeContent
+			}
 		}
 
 		if promptProvided {
@@ -46,7 +62,32 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// directAPICall handles the one-off command mode.
+// isInputFromPipe checks if stdin is receiving input from a pipe or redirect.
+func isInputFromPipe() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) == 0
+}
+
+// readPipeInput reads all content from stdin if it's a pipe.
+// Returns empty string if stdin is a terminal (interactive mode).
+func readPipeInput() string {
+	if !isInputFromPipe() {
+		return ""
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(content))
+}
+
+// directAPICall handles the one-off command mode with streaming output.
 func directAPICall(p string) {
 	apiKey := viper.GetString("api_key")
 	apiURL := viper.GetString("api_url")
@@ -59,21 +100,28 @@ func directAPICall(p string) {
 
 	client := llm.NewClient(apiURL, apiKey)
 
-	fmt.Println("You:", p)
-	fmt.Print("Tachigoma: ...")
-
 	messages := []llm.Message{
 		{Role: "user", Content: p},
 	}
 
 	ctx := context.Background()
-	response, err := client.Completion(ctx, messages, model)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError calling LLM API: %v\n", err)
-		os.Exit(1)
-	}
+	streamCh := client.CompletionStream(ctx, messages, model, nil) // No tools in direct mode
 
-	fmt.Printf("\rTachigoma: %s  \n", response)
+	// Consume the stream and print to stdout in real-time
+	for event := range streamCh {
+		switch event.Type {
+		case llm.EventStreamContent:
+			fmt.Print(event.Content)
+		case llm.EventError:
+			fmt.Fprintf(os.Stderr, "\nError: %v\n", event.Error)
+			os.Exit(1)
+		case llm.EventToolCall:
+			// In direct mode, we don't handle tool calls
+			fmt.Println("\n[Tool call requested. Please use interactive mode for tool usage.]")
+		case llm.EventStreamEnd:
+			fmt.Println() // Final newline
+		}
+	}
 }
 
 // callTUI handles the interactive session mode.

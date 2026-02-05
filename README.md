@@ -13,10 +13,11 @@ Tachigoma 是一个在终端中与大语言模型（LLM）交互的 Agent，出�
 ## ✨ 功能特性
 
 - **双交互模式**:
-  - **直接模式**: 通过 `tachigoma -p "你的问题"` 或 `tachigoma "你的问题"` 实现快速问答，获取结果后立即退出。
-  - **交互模式**: 直接运行 `tachigoma` 进入沉浸式的 TUI 界面，支持多轮上下文对话。
-- **灵活的配置**: 支持 XDG Base Directory 规范，配置可通过环境变量、用户配置文件或系统配置文件进行管理，适用于个人开发到多用户服务器部署场景。
-- **优雅的 TUI**: 基于 `charmbracelet/bubbletea` 构建，提供流畅的、带状态（加载中、错误提示）的对话体验。
+  - **直接模式**: 通过 `tachigoma -p "你的问题"` 实现快速问答，支持流式输出。
+  - **交互模式**: 直接运行 `tachigoma` 进入沉浸式 TUI 界面，支持多轮上下文对话。
+- **管道输入**: 支持 Unix 管道，可将文件或命令输出传递给 LLM 分析。
+- **灵活的配置**: 支持 XDG Base Directory 规范，配置可通过环境变量、用户配置文件或系统配置文件进行管理。
+- **优雅的 TUI**: 基于 `charmbracelet/bubbletea` 构建，提供流畅的、带状态的对话体验。
 - **美观的样式**: 使用 `charmbracelet/lipgloss` 对对话角色进行着色，界面清晰易读。
 - **健壮的命令结构**: 基于 `spf13/cobra` 构建，命令结构清晰，易于未来扩展。
 
@@ -105,25 +106,32 @@ model: "gpt-4"
 
 ### 4. 运行
 
-- **直接模式**:
+**直接模式**（流式输出）:
 
-  ```bash
-  go run main.go -p "你好，世界！"
-  ```
+```bash
+tachigoma -p "你的问题"
+```
 
-  或者
+**管道输入**:
 
-  ```bash
-  go run main.go "你好，世界！"
-  ```
+```bash
+# 分析文件内容
+cat file.txt | tachigoma -p "解释这个文件"
 
-- **交互模式**:
+# 代码审查
+git diff | tachigoma -p "review this change"
 
-  ```bash
-  go run main.go
-  ```
+# 分析命令输出
+ls -la | tachigoma -p "解释这些文件"
+```
 
-  在 TUI 界面中，输入你的问题后按 `Enter` 键发送。按 `Ctrl+C` 或 `Esc` 退出程序。
+**交互模式**:
+
+```bash
+tachigoma
+```
+
+在 TUI 界面中，输入你的问题后按 `Enter` 发送。按 `Ctrl+C` 或 `Esc` 退出。
 
 ## 🗺️ 开发计划
 
