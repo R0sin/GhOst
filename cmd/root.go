@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"tachigoma/internal/llm"
@@ -110,17 +112,60 @@ func init() {
 }
 
 func initConfig() {
-	viper.SetConfigName(".tachigoma")
+	// 配置文件名和类型
+	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("$HOME")
 
+	// 配置搜索路径（优先级从高到低）：
+	// 1. 当前目录 (开发时方便使用)
+	viper.AddConfigPath(".")
+
+	// 2. XDG 用户配置目录 (Linux/macOS: ~/.config/tachigoma, Windows: %APPDATA%\tachigoma)
+	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
+		viper.AddConfigPath(filepath.Join(xdgConfig, "tachigoma"))
+	} else {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if runtime.GOOS == "windows" {
+				// Windows: 使用 %APPDATA%
+				if appData := os.Getenv("APPDATA"); appData != "" {
+					viper.AddConfigPath(filepath.Join(appData, "tachigoma"))
+				}
+			} else {
+				// Linux/macOS: 使用 ~/.config/tachigoma
+				viper.AddConfigPath(filepath.Join(home, ".config", "tachigoma"))
+			}
+		}
+	}
+
+	// 3. 用户主目录 (向后兼容 .tachigoma.yaml)
+	home, err := os.UserHomeDir()
+	if err == nil {
+		viper.AddConfigPath(home)
+	}
+
+	// 4. 系统级配置目录 (仅 Linux/macOS)
+	if runtime.GOOS != "windows" {
+		viper.AddConfigPath("/etc/tachigoma")
+	}
+
+	// 设置环境变量前缀，例如 TACHIGOMA_API_KEY
+	viper.SetEnvPrefix("TACHIGOMA")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	// 设置默认值
 	viper.SetDefault("api_url", "http://localhost:3000/v1")
 	viper.SetDefault("model", "gpt-3.5-turbo")
 
+	// 尝试读取配置文件
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			// Config file not found
+			// 配置文件未找到 - 尝试旧的配置文件名 .tachigoma.yaml
+			viper.SetConfigName(".tachigoma")
+			if err := viper.ReadInConfig(); err != nil {
+				// 两个配置文件都未找到，依赖环境变量和默认值
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "Error reading config file: %s\n", err)
 			os.Exit(1)

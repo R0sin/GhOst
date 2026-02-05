@@ -15,7 +15,7 @@ Tachigoma 是一个在终端中与大语言模型（LLM）交互的 Agent，出�
 - **双交互模式**:
   - **直接模式**: 通过 `tachigoma -p "你的问题"` 或 `tachigoma "你的问题"` 实现快速问答，获取结果后立即退出。
   - **交互模式**: 直接运行 `tachigoma` 进入沉浸式的 TUI 界面，支持多轮上下文对话。
-- **灵活的配置**: 通过项目根目录下的 `.tachigoma.yaml` 文件管理 API 地址、密钥和模型名称，实现代码与配置分离。
+- **灵活的配置**: 支持 XDG Base Directory 规范，配置可通过环境变量、用户配置文件或系统配置文件进行管理，适用于个人开发到多用户服务器部署场景。
 - **优雅的 TUI**: 基于 `charmbracelet/bubbletea` 构建，提供流畅的、带状态（加载中、错误提示）的对话体验。
 - **美观的样式**: 使用 `charmbracelet/lipgloss` 对对话角色进行着色，界面清晰易读。
 - **健壮的命令结构**: 基于 `spf13/cobra` 构建，命令结构清晰，易于未来扩展。
@@ -50,20 +50,58 @@ go mod tidy
 
 ### 3. 配置
 
-在项目根目录下，创建一个名为 `.tachigoma.yaml` 的文件，并填入以下内容。请将 `api_key` 替换为你自己的密钥。
+Tachigoma 支持灵活的配置方式，遵循 XDG Base Directory 规范，适用于个人开发和多用户服务器部署场景。
+
+#### 配置文件位置
+
+配置文件按以下优先级顺序搜索（优先级从高到低）：
+
+| 优先级 | 路径 | 说明 |
+|:------:|------|------|
+| 1 | `./config.yaml` | 当前目录，开发调试时使用 |
+| 2 | `~/.config/tachigoma/config.yaml` | 用户级配置 (Linux/macOS) |
+| 2 | `%APPDATA%\tachigoma\config.yaml` | 用户级配置 (Windows) |
+| 3 | `~/.tachigoma.yaml` | 向后兼容旧配置 |
+| 4 | `/etc/tachigoma/config.yaml` | 系统级配置 (Linux/macOS) |
+
+#### 环境变量
+
+所有配置项都可以通过环境变量覆盖，使用 `TACHIGOMA_` 前缀：
+
+```bash
+export TACHIGOMA_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+export TACHIGOMA_API_URL="https://api.openai.com/v1"
+export TACHIGOMA_MODEL="gpt-4"
+```
+
+**配置优先级**: 环境变量 > 配置文件 > 默认值
+
+#### 配置文件示例
+
+创建 `~/.config/tachigoma/config.yaml`（Linux/macOS）或 `%APPDATA%\tachigoma\config.yaml`（Windows）：
 
 ```yaml
-# .tachigoma.yaml
+# Tachigoma 配置文件
 
 # 你的 OpenAI 标准 API 地址
-api_url: "http://localhost:3000/v1"
+api_url: "https://api.openai.com/v1"
 
-# 你的 API 密钥
+# 你的 API 密钥 (建议通过环境变量 TACHIGOMA_API_KEY 设置)
 api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # 你希望使用的模型名称
-model: "gemini-2.0-flash"
+model: "gpt-4"
 ```
+
+#### 多用户服务器部署
+
+对于多用户服务器场景，推荐以下配置策略：
+
+1. **系统管理员**: 在 `/etc/tachigoma/config.yaml` 设置共享的 `api_url` 和默认 `model`
+2. **各用户**: 通过环境变量 `TACHIGOMA_API_KEY` 设置个人 API 密钥（敏感信息不落盘）
+3. **用户个性化**: 可选在 `~/.config/tachigoma/config.yaml` 覆盖个人偏好设置
+
+> **安全提示**: 强烈建议通过环境变量传递 `api_key`，避免将敏感信息写入文件。如必须使用配置文件，请确保文件权限为 `600`。
 
 ### 4. 运行
 
