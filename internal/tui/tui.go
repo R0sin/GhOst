@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -65,13 +65,14 @@ type ConversationBlock struct {
 type model struct {
 	viewport        viewport.Model
 	textarea        textarea.Model
-	agent           *llm.Agent              // The new core logic handler
-	streamCh        <-chan llm.StreamEvent  // Channel for receiving streaming events
+	agent           *llm.Agent             // The new core logic handler
+	streamCh        <-chan llm.StreamEvent // Channel for receiving streaming events
 	loading         bool
 	lastContent     string // Stores the live content of the current streaming message
 	err             error
-	availableHeight int  // Available height for the viewport
-	ready           bool // Whether the UI has been sized and is ready for rendering
+	availableHeight int                   // Available height for the viewport
+	ready           bool                  // Whether the UI has been sized and is ready for rendering
+	renderer        *glamour.TermRenderer // Cached markdown renderer for performance
 }
 
 // --- TUI Messages ---
@@ -151,10 +152,18 @@ func NewModel(client *llm.Client, modelName string) tea.Model {
 
 	vp := viewport.New(0, 0)
 
+	// Create a cached renderer with dark style for consistent performance
+	// Using fixed style instead of AutoStyle to avoid terminal detection overhead on SSH
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(0), // Disable word wrap, let viewport handle it
+	)
+
 	return model{
 		agent:    llm.NewAgent(client, modelName),
 		textarea: ti,
 		viewport: vp,
+		renderer: renderer,
 	}
 }
 
@@ -527,7 +536,7 @@ func (m model) renderConversation(fullRender bool) string {
 	var b strings.Builder
 	viewState := m.agent.GetViewState()
 
-	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle())
+	// Use cached renderer for better performance (especially on SSH sessions)
 	blocks := groupMessagesIntoBlocks(viewState.Messages)
 
 	for _, block := range blocks {
@@ -536,7 +545,7 @@ func (m model) renderConversation(fullRender bool) string {
 			b.WriteString(renderUserBlock(block))
 		case "assistant":
 			isStreaming := !fullRender && block.IsLastMsg
-			b.WriteString(renderAssistantBlock(block, renderer, m.lastContent, isStreaming))
+			b.WriteString(renderAssistantBlock(block, m.renderer, m.lastContent, isStreaming))
 		}
 	}
 
