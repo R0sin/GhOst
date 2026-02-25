@@ -165,10 +165,7 @@ func initConfig() {
 	viper.SetConfigType("yaml")
 
 	// 配置搜索路径（优先级从高到低）：
-	// 1. 当前目录 (开发时方便使用)
-	viper.AddConfigPath(".")
-
-	// 2. XDG 用户配置目录 (Linux/macOS: ~/.config/tachigoma, Windows: %APPDATA%\tachigoma)
+	// 1. XDG 用户配置目录 (Linux/macOS: ~/.config/tachigoma, Windows: %APPDATA%\tachigoma)
 	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
 		viper.AddConfigPath(filepath.Join(xdgConfig, "tachigoma"))
 	} else {
@@ -186,13 +183,13 @@ func initConfig() {
 		}
 	}
 
-	// 3. 用户主目录 (向后兼容 .tachigoma.yaml)
+	// 2. 用户主目录 (向后兼容 .tachigoma.yaml)
 	home, err := os.UserHomeDir()
 	if err == nil {
 		viper.AddConfigPath(home)
 	}
 
-	// 4. 系统级配置目录 (仅 Linux/macOS)
+	// 3. 系统级配置目录 (仅 Linux/macOS)
 	if runtime.GOOS != "windows" {
 		viper.AddConfigPath("/etc/tachigoma")
 	}

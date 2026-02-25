@@ -59,11 +59,10 @@ Tachigoma 支持灵活的配置方式，遵循 XDG Base Directory 规范，适�
 
 | 优先级 | 路径 | 说明 |
 |:------:|------|------|
-| 1 | `./config.yaml` | 当前目录，开发调试时使用 |
-| 2 | `~/.config/tachigoma/config.yaml` | 用户级配置 (Linux/macOS) |
-| 2 | `%APPDATA%\tachigoma\config.yaml` | 用户级配置 (Windows) |
-| 3 | `~/.tachigoma.yaml` | 向后兼容旧配置 |
-| 4 | `/etc/tachigoma/config.yaml` | 系统级配置 (Linux/macOS) |
+| 1 | `~/.config/tachigoma/config.yaml` | 用户级配置 (Linux/macOS) |
+| 1 | `%APPDATA%\tachigoma\config.yaml` | 用户级配置 (Windows) |
+| 2 | `~/.tachigoma.yaml` | 向后兼容旧配置 |
+| 3 | `/etc/tachigoma/config.yaml` | 系统级配置 (Linux/macOS) |
 
 #### 环境变量
 
